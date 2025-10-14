@@ -90,10 +90,10 @@ final public class BlockPMCC
 		/* columns */
 		final double[] columnSum = new double[width];
 		final double[] columnSumOfSquares = new double[width];
-		for (int j = 1; j < w; ++j) {
+		for (int j = 1; j < h; ++j) {
 			final int offset = j * w + 1;
 
-			for (int i = 0; i < height; ++i) {
+			for (int i = 0; i < width; ++i) {
 				final int index = offset + i;
 				columnSum[i] += sum[index];
 				sum[index] = columnSum[i];
@@ -145,10 +145,10 @@ final public class BlockPMCC
 		final double[] columnSumOfSquares1 = new double[width];
 		final double[] columnSum2 = new double[width];
 		final double[] columnSumOfSquares2 = new double[width];
-		for (int j = 1; j < w; ++j) {
+		for (int j = 1; j < h; ++j) {
 			final int offset = j * w + 1;
 
-			for (int i = 0; i < height; ++i) {
+			for (int i = 0; i < width; ++i) {
 				final int index = offset + i;
 				columnSum1[i] += sum1[index];
 				sum1[index] = columnSum1[i];
