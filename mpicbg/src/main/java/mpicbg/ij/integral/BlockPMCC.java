@@ -88,17 +88,16 @@ final public class BlockPMCC
 		}
 
 		/* columns */
-		final double[] columnSum = new double[width];
-		final double[] columnSumOfSquares = new double[width];
 		for (int j = 1; j < h; ++j) {
-			final int offset = j * w + 1;
+			final int rowOffset = j * w + 1;
+			final int prevRowOffset = rowOffset - w;
 
 			for (int i = 0; i < width; ++i) {
-				final int index = offset + i;
-				columnSum[i] += sum[index];
-				sum[index] = columnSum[i];
-				columnSumOfSquares[i] += sumOfSquares[index];
-				sumOfSquares[index] = columnSumOfSquares[i];
+				final int index = rowOffset + i;
+				final int indexAbove = prevRowOffset + i;
+
+				sum[index] += sum[indexAbove];
+				sumOfSquares[index] += sumOfSquares[indexAbove];
 			}
 		}
 	}
@@ -141,24 +140,18 @@ final public class BlockPMCC
 		}
 
 		/* columns */
-		final double[] columnSum1 = new double[width];
-		final double[] columnSumOfSquares1 = new double[width];
-		final double[] columnSum2 = new double[width];
-		final double[] columnSumOfSquares2 = new double[width];
 		for (int j = 1; j < h; ++j) {
-			final int offset = j * w + 1;
+			final int rowOffset = j * w + 1;
+			final int prevRowOffset = rowOffset - w;
 
 			for (int i = 0; i < width; ++i) {
-				final int index = offset + i;
-				columnSum1[i] += sum1[index];
-				sum1[index] = columnSum1[i];
-				columnSumOfSquares1[i] += sumOfSquares1[index];
-				sumOfSquares1[index] = columnSumOfSquares1[i];
+				final int index = rowOffset + i;
+				final int indexAbove = prevRowOffset + i;
 
-				columnSum2[i] += sum2[index];
-				sum2[index] = columnSum2[i];
-				columnSumOfSquares2[i] += sumOfSquares2[index];
-				sumOfSquares2[index] = columnSumOfSquares2[i];
+				sum1[index] += sum1[indexAbove];
+				sumOfSquares1[index] += sumOfSquares1[indexAbove];
+				sum2[index] += sum2[indexAbove];
+				sumOfSquares2[index] += sumOfSquares2[indexAbove];
 			}
 		}
 	}

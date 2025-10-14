@@ -163,17 +163,15 @@ public class BlockStatistics
 			final double[] sumOfSquares )
 	{
 		final int width = w - 1;
-		final double[] columnSum = new double[width];
-		final double[] columnSumOfSquares = new double[width];
 		for (int j = 1; j < h; ++j) {
-			final int offset = j * w + 1;
+			final int rowOffset = j * w + 1;
+			final int prevRowOffset = rowOffset - w;
 
 			for (int i = 0; i < width; ++i) {
-				final int index = offset + i;
-				columnSum[i] += sum[index];
-				sum[index] = columnSum[i];
-				columnSumOfSquares[i] += sumOfSquares[index];
-				sumOfSquares[index] = columnSumOfSquares[i];
+				final int index = rowOffset + i;
+				final int indexAbove = prevRowOffset + i;
+				sum[index] += sum[indexAbove];
+				sumOfSquares[index] += sumOfSquares[indexAbove];
 			}
 		}
 	}

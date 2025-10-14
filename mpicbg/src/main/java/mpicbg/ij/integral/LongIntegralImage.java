@@ -89,14 +89,12 @@ final public class LongIntegralImage implements IntegralImage
 		}
 
 		/* columns */
-		final long[] columnSum = new long[width];
 		for (int j = 1; j < h; ++j) {
-			final int offset = j * w + 1;
+			final int rowOffset = j * w + 1;
+			final int prevRowOffset = rowOffset - w;
 
 			for (int i = 0; i < width; ++i) {
-				final int index = offset + i;
-				columnSum[i] += sum[index];
-				sum[index] = columnSum[i];
+				sum[rowOffset + i] += sum[prevRowOffset + i];
 			}
 		}
 	}
@@ -144,14 +142,12 @@ final public class LongIntegralImage implements IntegralImage
 		}
 
 		/* columns */
-		final long[] columnSum = new long[width];
 		for (int j = 1; j < h; ++j) {
-			final int offset = j * w + 1;
+			final int rowOffset = j * w + 1;
+			final int prevRowOffset = rowOffset - w;
 
 			for (int i = 0; i < width; ++i) {
-				final int index = offset + i;
-				columnSum[i] += sum[index];
-				sum[index] = columnSum[i];
+				sum[rowOffset + i] += sum[prevRowOffset + i];
 			}
 		}
 	}

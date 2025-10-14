@@ -94,21 +94,17 @@ final public class LongRGBIntegralImage implements IntegralImage
 		}
 
 		/* columns */
-		final long[] columnSumR = new long[width];
-		final long[] columnSumG = new long[width];
-		final long[] columnSumB = new long[width];
 		for (int j = 1; j < h; ++j) {
-			final int offset = j * w + 1;
+			final int rowOffset = j * w + 1;
+			final int prevRowOffset = rowOffset - w;
 
 			for (int i = 0; i < width; ++i) {
-				final int index = offset + i;
+				final int index = rowOffset + i;
+				final int indexAbove = prevRowOffset + i;
 
-				columnSumR[i] += sumR[index];
-				sumR[index] = columnSumR[i];
-				columnSumG[i] += sumG[index];
-				sumG[index] = columnSumG[i];
-				columnSumB[i] += sumB[index];
-				sumB[index] = columnSumB[i];
+				sumR[index] += sumR[indexAbove];
+				sumG[index] += sumG[indexAbove];
+				sumB[index] += sumB[indexAbove];
 			}
 		}
 	}
