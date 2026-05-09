@@ -137,7 +137,7 @@ public class Util
 	 * @param limit the limit for clipping histogram entries
 	 * @return the transfer function as a LUT
 	 */
-	static float[] createTransfer(
+	static public float[] createTransfer(
 			final int[] hist,
 			final int limit )
 	{
