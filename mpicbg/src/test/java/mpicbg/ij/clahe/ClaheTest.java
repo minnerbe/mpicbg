@@ -183,8 +183,8 @@ class ClaheTest {
 
 		final byte[] px = (byte[]) imp.getProcessor().getPixels();
 		int min = 255, max = 0;
-		for (int i = 0; i < px.length; ++i) {
-			final int v = px[i] & 0xff;
+		for (byte b : px) {
+			final int v = b & 0xff;
 			if (v < min) min = v;
 			if (v > max) max = v;
 		}
