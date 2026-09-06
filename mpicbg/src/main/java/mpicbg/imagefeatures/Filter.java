@@ -313,64 +313,87 @@ public class Filter
 		xl += hl;
 		yl += vl;
 
+		// Both passes iterate the kernel taps in the outer loop and stream along a contiguous row in
+		// the inner loop, which C2 vectorizes. Every output pixel still accumulates its taps in
+		// ascending order from tap 0, so the result is bit-identical to the scalar reduction.
+		// C2 (JDK 8 to 25) only vectorizes acc[ x ] += k * src[ x ] when both arrays are indexed
+		// by the same expression, so the (shifted) source row is copied into a scratch row first;
+		// the copy is a small fraction of the multiply-adds.
+		final float[] in = input.data;
+		final float[] tmp = temp.data;
+		final float[] out = output.data;
+		final int w = input.width;
+		final float[] row = new float[w];
+		final float[] acc = new float[w];
+
 		// horizontal convolution per row
-		final int rl = input.height * input.width;
-		for ( int r = 0; r < rl; r += input.width )
-		{
-			for ( int x = hl; x < xl; ++x )
-			{
-				final int c = x - hl;
-				float val = 0;
-				for ( int xk = 0; xk < h.length; ++xk )
-				{
-					val += h[ xk ] * input.data[ r + c + xk ];
-				}
-				temp.data[ r + x ] = val;
+		final int n = xl - hl; // number of output pixels per row that need no border handling
+		final int rl = input.height * w;
+		for (int r = 0; r < rl; r += w) {
+			for (int xk = 0; xk < h.length; ++xk) {
+				final float hk = h[xk];
+				System.arraycopy(in, r + xk, row, 0, n);
+				if (xk == 0)
+					for (int x = 0; x < n; ++x)
+						acc[x] = hk * row[x];
+				else
+					for (int x = 0; x < n; ++x)
+						acc[x] += hk * row[x];
 			}
+			System.arraycopy(acc, 0, tmp, r + hl, n);
 			for ( int x = 0; x < hl; ++x )
 			{
 				float valb = 0;
 				float vala = 0;
 				for ( int xk = 0; xk < h.length; ++xk )
 				{
-					valb += h[ xk ] * input.data[ r + xb[ x + xk ] ];
-					vala += h[ xk ] * input.data[ r + xa[ x + xk ] ];
+					valb += h[xk] * in[r + xb[x + xk]];
+					vala += h[xk] * in[r + xa[x + xk]];
 				}
-				temp.data[ r + x ] = valb;
-				temp.data[ r + x + xl ] = vala;
+				tmp[r + x] = valb;
+				tmp[r + x + xl] = vala;
 			}
 		}
 
-		// vertical convolution per column
-		final int rm = yl * temp.width;
-		final int vlc = vl * temp.width;
-		for ( int x = 0; x < temp.width; ++x )
-		{
-			for ( int r = vlc; r < rm; r += temp.width )
-			{
-				float val = 0;
-				final int c = r - vlc;
-				int rk = 0;
-				for ( int yk = 0; yk < v.length; ++yk )
-				{
-					val += v[ yk ] * temp.data[ c + rk + x ];
-					rk += temp.width;
-				}
-				output.data[ r + x ] = val;
+		// vertical convolution, row-major: each output row accumulates the v.length input rows
+		final int rm = yl * w;
+		final int vlc = vl * w;
+		for (int r = vlc; r < rm; r += w) {
+			for (int yk = 0; yk < v.length; ++yk) {
+				final float vk = v[yk];
+				System.arraycopy(tmp, r - vlc + yk * w, row, 0, w);
+				if (yk == 0)
+					for (int x = 0; x < w; ++x)
+						acc[x] = vk * row[x];
+				else
+					for (int x = 0; x < w; ++x)
+						acc[x] += vk * row[x];
 			}
-			for ( int y = 0; y < vl; ++y )
-			{
-				final int r = y * temp.width;
-				float valb = 0;
-				float vala = 0;
-				for ( int yk = 0; yk < v.length; ++yk )
-				{
-					valb += v[ yk ] * temp.data[ yb[ y + yk ] + x ];
-					vala += v[ yk ] * temp.data[ ya[ y + yk ] + x ];
-				}
-				output.data[ r + x ] = valb;
-				output.data[ r + rm + x ] = vala;
+			System.arraycopy(acc, 0, out, r, w);
+		}
+		for (int y = 0; y < vl; ++y) {
+			for (int yk = 0; yk < v.length; ++yk) {
+				final float vk = v[yk];
+				System.arraycopy(tmp, yb[y + yk], row, 0, w);
+				if (yk == 0)
+					for (int x = 0; x < w; ++x)
+						acc[x] = vk * row[x];
+				else
+					for (int x = 0; x < w; ++x)
+						acc[x] += vk * row[x];
 			}
+			System.arraycopy(acc, 0, out, y * w, w);
+			for (int yk = 0; yk < v.length; ++yk) {
+				final float vk = v[yk];
+				System.arraycopy(tmp, ya[y + yk], row, 0, w);
+				if (yk == 0)
+					for (int x = 0; x < w; ++x)
+						acc[x] = vk * row[x];
+				else
+					for (int x = 0; x < w; ++x)
+						acc[x] += vk * row[x];
+			}
+			System.arraycopy(acc, 0, out, y * w + rm, w);
 		}
 
 		return output;
