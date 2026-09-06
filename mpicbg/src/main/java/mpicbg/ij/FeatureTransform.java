@@ -91,14 +91,47 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 			final float rod
 	) {
 		final TransposedFeatures candidates = new TransposedFeatures(fs2);
-		final float[] dist = new float[candidates.size()];
+		final Feature[] targets = fs1.toArray(new Feature[0]);
+		final int m = candidates.size();
+		final float[] dist = new float[m];
 
-		for (final Feature f1 : fs1) {
-			final Feature best = candidates.closestChecked(f1, dist, rod);
+		// Running nearest and second-nearest candidate per target, continued across candidate
+		// blocks. Blocks keep the transposed sub-matrix (128 x block x 4 bytes) L2-resident while
+		// all targets sweep over it; otherwise every target re-streams the whole matrix from L3.
+		final float[] best = new float[targets.length];
+		final float[] second = new float[targets.length];
+		final int[] closest = new int[targets.length];
+		java.util.Arrays.fill(best, Float.MAX_VALUE);
+		java.util.Arrays.fill(second, Float.MAX_VALUE);
 
-			if (best != null) {
+		for (int j0 = 0; j0 < m; j0 += CANDIDATE_BLOCK) {
+			final int j1 = Math.min(m, j0 + CANDIDATE_BLOCK);
+			for (int i = 0; i < targets.length; ++i) {
+				candidates.squaredDistances(targets[i].descriptor, dist, j0, j1);
+				// same scan and tie-breaking as FeatureAccumulator fed in candidate order
+				float b = best[i], s = second[i];
+				int c = closest[i];
+				for (int j = j0; j < j1; ++j) {
+					final float d = dist[j];
+					if (d < b) {
+						s = b;
+						b = d;
+						c = j;
+					} else if (d < s) {
+						s = d;
+					}
+				}
+				best[i] = b;
+				second[i] = s;
+				closest[i] = c;
+			}
+		}
+
+		for (int i = 0; i < targets.length; ++i) {
+			if (second[i] < Float.MAX_VALUE && Math.sqrt(best[i]) / Math.sqrt(second[i]) < rod) {
+				final Feature f1 = targets[i], f2 = candidates.features[closest[i]];
 				final Point p1 = new Point(new double[]{f1.location[0], f1.location[1]});
-				final Point p2 = new Point(new double[]{best.location[0], best.location[1]});
+				final Point p2 = new Point(new double[]{f2.location[0], f2.location[1]});
 				matches.add(new PointMatch(p1, p2));
 			}
 		}
@@ -232,6 +265,9 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 	 * over the 128 components is a float reduction, which it never vectorizes. The summation order
 	 * per pair is the same as in {@link Feature#descriptorDistance}, so results are bit-identical.
 	 */
+	/** Candidates per block: 128 components x 1024 x 4 bytes = 512 KiB, half of a typical L2. */
+	private static final int CANDIDATE_BLOCK = 1024;
+
 	private static class TransposedFeatures {
 		private final Feature[] features;
 		private final float[][] component;
@@ -253,16 +289,15 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 			return features.length;
 		}
 
-		/** Squared distances of {@code target} to all candidates into {@code dist}. */
-		void squaredDistances(final float[] t, final float[] dist) {
-			final int m = features.length;
+		/** Squared distances of {@code t} to the candidates {@code j0} (inclusive) to {@code j1} (exclusive) into {@code dist}. */
+		void squaredDistances(final float[] t, final float[] dist, final int j0, final int j1) {
 			final int n = component.length;
-			java.util.Arrays.fill(dist, 0f);
+			java.util.Arrays.fill(dist, j0, j1, 0f);
 			int k = 0;
 			for (; k < n - 3; k += 4) {
 				final float t0 = t[k], t1 = t[k + 1], t2 = t[k + 2], t3 = t[k + 3];
 				final float[] c0 = component[k], c1 = component[k + 1], c2 = component[k + 2], c3 = component[k + 3];
-				for (int j = 0; j < m; ++j) {
+				for (int j = j0; j < j1; ++j) {
 					final float a0 = t0 - c0[j];
 					final float a1 = t1 - c1[j];
 					final float a2 = t2 - c2[j];
@@ -273,32 +308,11 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 			for (; k < n; ++k) {
 				final float tk = t[k];
 				final float[] ck = component[k];
-				for (int j = 0; j < m; ++j) {
+				for (int j = j0; j < j1; ++j) {
 					final float a = tk - ck[j];
 					dist[j] += a * a;
 				}
 			}
-		}
-
-		/** Same selection and tie-breaking as {@link FeatureAccumulator} fed in candidate order. */
-		Feature closestChecked(final Feature target, final float[] dist, final float rod) {
-			squaredDistances(target.descriptor, dist);
-			int closest = -1;
-			float best = Float.MAX_VALUE, second = Float.MAX_VALUE;
-			for (int j = 0; j < dist.length; ++j) {
-				final float d = dist[j];
-				if (d < best) {
-					second = best;
-					best = d;
-					closest = j;
-				} else if (d < second) {
-					second = d;
-				}
-			}
-			if (second < Float.MAX_VALUE && Math.sqrt(best) / Math.sqrt(second) < rod) {
-				return features[closest];
-			}
-			return null;
 		}
 	}
 
