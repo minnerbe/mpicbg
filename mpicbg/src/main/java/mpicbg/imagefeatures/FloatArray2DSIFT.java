@@ -346,8 +346,11 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 						int bin_t = bin_b + 1;
 						final double d = bin_location - bin_b;
 
-						bin_b = ( bin_b + 2 * p.fdBins ) % p.fdBins;
-						bin_t = ( bin_t + 2 * p.fdBins ) % p.fdBins;
+						// wrap into [ 0, fdBins ); same as ( bin + 2 * fdBins ) % fdBins without the division
+						while (bin_b < 0) bin_b += p.fdBins;
+						while (bin_b >= p.fdBins) bin_b -= p.fdBins;
+						while (bin_t < 0) bin_t += p.fdBins;
+						while (bin_t >= p.fdBins) bin_t -= p.fdBins;
 
 						final double t = region0[yp + xp + ysrp + xsr];
 
