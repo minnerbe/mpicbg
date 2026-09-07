@@ -263,7 +263,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 			final double orientation )
 	{
 		final FloatArray2DScaleOctave octave = octaves[ o ];
-		final FloatArray2D[] gradients = octave.getL1( ( int )Math.round( c[ 2 ] ) );
+		final FloatArray2DScaleOctave.Gradients gradients = octave.getGradients((int)Math.round(c[2]));
 		final FloatArray2D[] region = new FloatArray2D[ 2 ];
 
 		region[ 0 ] = new FloatArray2D(
@@ -300,22 +300,22 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 				// translate ys to sample y position in the gradient image
 				final int yg = Util.pingPong(
 						( int )( Math.round( yr + c[ 1 ] ) ),
-						gradients[ 0 ].height );
+						gradients.height);
 
 				// translate xs to sample x position in the gradient image
 				final int xg = Util.pingPong(
 						( int )( Math.round( xr + c[ 0 ] ) ),
-						gradients[ 0 ].width );
+						gradients.width);
 
 				// get the samples
 				final int region_p = fdWidth * y + x;
-				final int gradient_p = gradients[ 0 ].width * yg + xg;
+				final float der_x = gradients.derX(xg, yg), der_y = gradients.derY(xg, yg);
 
 				// weigh the gradients
-				region[ 0 ].data[ region_p ] = gradients[ 0 ].data[ gradient_p ] * descriptorMask[ y ][ x ];
+				region[0].data[region_p] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y) * descriptorMask[y][x];
 
 				// rotate the gradients orientation it with respect to the features orientation
-				region[ 1 ].data[ region_p ] = ( float )( gradients[ 1 ].data[ gradient_p ] - orientation );
+				region[1].data[region_p] = (float)((float)Math.atan2(der_y, der_x) - orientation);
 
 				// TODO this is for test
 				//---------------------------------------------------------------------

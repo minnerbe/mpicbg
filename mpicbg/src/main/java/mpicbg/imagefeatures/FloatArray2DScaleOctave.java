@@ -143,6 +143,46 @@ public class FloatArray2DScaleOctave
 		}
 		return l1[ i ];
 	}
+
+	/**
+	 * Gradient of one level, computed per pixel on demand and not stored. SIFT samples only a
+	 * fraction of all pixels, each about 1.5 times, so caching would save little compute but
+	 * cost two full-size arrays per level. Same formulas as {@link Filter#createGradients(FloatArray2D)}.
+	 */
+	public static final class Gradients {
+		final float[] data;
+		public final int width, height;
+
+		Gradients(final FloatArray2D l) {
+			data = l.data;
+			width = l.width;
+			height = l.height;
+		}
+
+		/** central difference in x at ( x, y ), clamped at the border */
+		public float derX(final int x, final int y) {
+			final int r = y * width;
+			return (data[r + Math.min(x + 1, width - 1)] - data[r + Math.max(0, x - 1)]) / 2;
+		}
+
+		/** central difference in y at ( x, y ), clamped at the border */
+		public float derY(final int x, final int y) {
+			return (data[width * Math.min(y + 1, height - 1) + x] - data[width * Math.max(0, y - 1) + x]) / 2;
+		}
+
+		/** Math.pow( d, 2 ) == d * d exactly, so this equals Filter.createGradients */
+		public static float mag(final float der_x, final float der_y) {
+			return (float)Math.sqrt((double)der_x * der_x + (double)der_y * der_y);
+		}
+	}
+
+	private Gradients[] g;
+
+	public Gradients getGradients(final int i) {
+		if (g[i] == null)
+			g[i] = new Gradients(l[i]);
+		return g[i];
+	}
 	
 	/**
 	 * Constructor
@@ -276,6 +316,7 @@ public class FloatArray2DScaleOctave
 		{
 			l1[ i ] = null;
 		}
+		g = new Gradients[STEPS + 3];
 		
 		state = State.COMPLETE;
 		
@@ -291,6 +332,7 @@ public class FloatArray2DScaleOctave
 		this.d = null;
 		this.l = null;
 		this.l1 = null;
+		this.g = null;
 	}
 
 

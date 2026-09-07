@@ -57,7 +57,7 @@ final class OrientationHistogram {
 		//FloatArrayToImagePlus( gaussianMask, "gaussianMask", 0, 0 ).show();
 
 		// get the gradients in a region arround the keypoints location
-		final FloatArray2D[] src = octave.getL1((int)Math.round(c[2]));
+		final FloatArray2DScaleOctave.Gradients src = octave.getGradients((int)Math.round(c[2]));
 		final FloatArray2D[] gradientROI = new FloatArray2D[2];
 		gradientROI[0] = new FloatArray2D(gaussianMask.width, gaussianMask.width);
 		gradientROI[1] = new FloatArray2D(gaussianMask.width, gaussianMask.width);
@@ -65,13 +65,14 @@ final class OrientationHistogram {
 		final int half_size = gaussianMask.width / 2;
 		int n = gaussianMask.width * gaussianMask.width - 1;
 		for (int yi = gaussianMask.width - 1; yi >= 0; --yi) {
-			final int ra_y = src[0].width * Math.max(0, Math.min(src[0].height - 1, (int)c[1] + yi - half_size));
-			final int ra_x = ra_y + Math.min((int)c[0], src[0].width - 1);
+			final int ya = Math.max(0, Math.min(src.height - 1, (int)c[1] + yi - half_size));
+			final int ra_x = Math.min((int)c[0], src.width - 1);
 
 			for (int xi = gaussianMask.width - 1; xi >= 0; --xi) {
-				final int pt = Math.max(ra_y, Math.min(ra_y + src[0].width - 2, ra_x + xi - half_size));
-				gradientROI[0].data[n] = src[0].data[pt];
-				gradientROI[1].data[n] = src[1].data[pt];
+				final int xa = Math.max(0, Math.min(src.width - 2, ra_x + xi - half_size));
+				final float der_x = src.derX(xa, ya), der_y = src.derY(xa, ya);
+				gradientROI[0].data[n] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y);
+				gradientROI[1].data[n] = (float)Math.atan2(der_y, der_x);
 				--n;
 			}
 		}
