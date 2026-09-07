@@ -270,8 +270,14 @@ public class Filter
     }
 
     /**
-	 * Convolve an image with a horizontal and a vertical kernel
-	 * simple straightforward, not optimized---replace this with a trusted better version soon
+	 * Convolve an image with a horizontal and a vertical kernel.
+	 * <p>
+	 * Both passes iterate the kernel taps in the outer loop and stream along a contiguous row in the
+	 * inner loop, which C2 vectorizes. Every output pixel still accumulates its taps in ascending
+	 * order from tap 0, so the result is bit-identical to the scalar reduction. The horizontally
+	 * convolved rows are kept in a ring of {@code v.length} rows that stays in the L2 cache instead of
+	 * a full-size temporary image that would be written to and read back from memory.
+	 * </p>
 	 *
 	 * @param input the input image
 	 * @param h horizontal kernel
@@ -284,118 +290,117 @@ public class Filter
 			final float[] h,
 			final float[] v )
 	{
-		final FloatArray2D output = new FloatArray2D( input.width, input.height );
-		final FloatArray2D temp = new FloatArray2D( input.width, input.height );
+		final int w = input.width;
+		final int height = input.height;
+		final FloatArray2D output = new FloatArray2D(w, height);
 
 		final int hl = h.length / 2;
 		final int vl = v.length / 2;
-
-		int xl = input.width - h.length + 1;
-		int yl = input.height - v.length + 1;
+		final int n = w - h.length + 1; // pixels per row that need no border handling
 
 		// create lookup tables for coordinates outside the image range
 		final int[] xb = new int[ h.length + hl - 1 ];
 		final int[] xa = new int[ h.length + hl - 1 ];
 		for ( int i = 0; i < xb.length; ++i )
 		{
-			xb[ i ] = Util.pingPong( i - hl, input.width );
-			xa[ i ] = Util.pingPong( i + xl, input.width );
+			xb[i] = Util.pingPong(i - hl, w);
+			xa[i] = Util.pingPong(i + n, w);
 		}
 
-		final int[] yb = new int[ v.length + vl - 1 ];
-		final int[] ya = new int[ v.length + vl - 1 ];
-		for ( int i = 0; i < yb.length; ++i )
-		{
-			yb[ i ] = input.width * Util.pingPong( i - vl, input.height );
-			ya[ i ] = input.width * Util.pingPong( i + yl, input.height );
-		}
-
-		xl += hl;
-		yl += vl;
-
-		// Both passes iterate the kernel taps in the outer loop and stream along a contiguous row in
-		// the inner loop, which C2 vectorizes. Every output pixel still accumulates its taps in
-		// ascending order from tap 0, so the result is bit-identical to the scalar reduction.
-		// C2 (JDK 8 to 25) only vectorizes acc[ x ] += k * src[ x ] when both arrays are indexed
-		// by the same expression, so the (shifted) source row is copied into a scratch row first;
-		// the copy is a small fraction of the multiply-adds.
 		final float[] in = input.data;
-		final float[] tmp = temp.data;
 		final float[] out = output.data;
-		final int w = input.width;
+		final float[][] ring = new float[v.length][w];
 		final float[] row = new float[w];
 		final float[] acc = new float[w];
 
-		// horizontal convolution per row
-		final int n = xl - hl; // number of output pixels per row that need no border handling
-		final int rl = input.height * w;
-		for (int r = 0; r < rl; r += w) {
-			for (int xk = 0; xk < h.length; ++xk) {
-				final float hk = h[xk];
-				System.arraycopy(in, r + xk, row, 0, n);
-				if (xk == 0)
-					for (int x = 0; x < n; ++x)
-						acc[x] = hk * row[x];
-				else
-					for (int x = 0; x < n; ++x)
-						acc[x] += hk * row[x];
-			}
-			System.arraycopy(acc, 0, tmp, r + hl, n);
-			for ( int x = 0; x < hl; ++x )
-			{
-				float valb = 0;
-				float vala = 0;
-				for ( int xk = 0; xk < h.length; ++xk )
-				{
-					valb += h[xk] * in[r + xb[x + xk]];
-					vala += h[xk] * in[r + xa[x + xk]];
-				}
-				tmp[r + x] = valb;
-				tmp[r + x + xl] = vala;
-			}
-		}
-
-		// vertical convolution, row-major: each output row accumulates the v.length input rows
-		final int rm = yl * w;
-		final int vlc = vl * w;
-		for (int r = vlc; r < rm; r += w) {
-			for (int yk = 0; yk < v.length; ++yk) {
-				final float vk = v[yk];
-				System.arraycopy(tmp, r - vlc + yk * w, row, 0, w);
-				if (yk == 0)
-					for (int x = 0; x < w; ++x)
-						acc[x] = vk * row[x];
-				else
-					for (int x = 0; x < w; ++x)
-						acc[x] += vk * row[x];
-			}
-			System.arraycopy(acc, 0, out, r, w);
-		}
-		for (int y = 0; y < vl; ++y) {
-			for (int yk = 0; yk < v.length; ++yk) {
-				final float vk = v[yk];
-				System.arraycopy(tmp, yb[y + yk], row, 0, w);
-				if (yk == 0)
-					for (int x = 0; x < w; ++x)
-						acc[x] = vk * row[x];
-				else
-					for (int x = 0; x < w; ++x)
-						acc[x] += vk * row[x];
-			}
+		int next = 0; // the next input row to be convolved horizontally
+		for (int y = 0; y < height; ++y) {
+			// output row y needs the input rows y - vl to y + vl (mirrored at the borders), so the ring holds all of them
+			for (final int last = Math.min(height - 1, y + vl); next <= last; ++next)
+				convolveRow(in, next * w, h, n, xb, xa, row, acc, ring[next % v.length]);
+			convolveColumns(ring, v, y, height, acc);
 			System.arraycopy(acc, 0, out, y * w, w);
-			for (int yk = 0; yk < v.length; ++yk) {
-				final float vk = v[yk];
-				System.arraycopy(tmp, ya[y + yk], row, 0, w);
-				if (yk == 0)
-					for (int x = 0; x < w; ++x)
-						acc[x] = vk * row[x];
-				else
-					for (int x = 0; x < w; ++x)
-						acc[x] += vk * row[x];
-			}
-			System.arraycopy(acc, 0, out, y * w + rm, w);
 		}
 
 		return output;
+	}
+
+	/**
+	 * Convolve the row of {@code in} starting at {@code r} with {@code h} into {@code t}. C2 (JDK 8 to
+	 * 25) only vectorizes {@code acc[ x ] += k * src[ x ]} when both arrays are indexed by the same
+	 * expression, so each shifted source row is copied into a scratch row first; the copy is a small
+	 * fraction of the multiply-adds and stays in L1.
+	 */
+	private static void convolveRow(
+			final float[] in,
+			final int r,
+			final float[] h,
+			final int n,
+			final int[] xb,
+			final int[] xa,
+			final float[] row,
+			final float[] acc,
+			final float[] t
+	) {
+		final int hl = h.length / 2;
+		for (int xk = 0; xk < h.length; ++xk) {
+			final float hk = h[xk];
+			System.arraycopy(in, r + xk, row, 0, n);
+			if (xk == 0)
+				for (int x = 0; x < n; ++x)
+					acc[x] = hk * row[x];
+			else
+				for (int x = 0; x < n; ++x)
+					acc[x] += hk * row[x];
+		}
+		System.arraycopy(acc, 0, t, hl, n);
+		for (int x = 0; x < hl; ++x) {
+			float valb = 0;
+			float vala = 0;
+			for (int xk = 0; xk < h.length; ++xk) {
+				valb += h[xk] * in[r + xb[x + xk]];
+				vala += h[xk] * in[r + xa[x + xk]];
+			}
+			t[x] = valb;
+			t[x + n + hl] = vala;
+		}
+	}
+
+	/**
+	 * {@code acc} = the rows of the ring for the input rows {@code y - vl ... y + vl} (mirrored at the
+	 * borders) weighted by {@code v}. The ring rows are read in place, and four taps share one load and
+	 * store of the accumulator; the taps are still added one after the other in ascending order.
+	 */
+	private static void convolveColumns(final float[][] ring, final float[] v, final int y, final int height, final float[] acc) {
+		final int vl = v.length / 2;
+		final int w = acc.length;
+		final float v0 = v[0];
+		final float[] t0 = ringRow(ring, y - vl, height);
+		for (int x = 0; x < w; ++x)
+			acc[x] = v0 * t0[x];
+		int yk = 1;
+		for (; yk + 3 < v.length; yk += 4) {
+			final float v1 = v[yk], v2 = v[yk + 1], v3 = v[yk + 2], v4 = v[yk + 3];
+			final float[] t1 = ringRow(ring, y - vl + yk, height), t2 = ringRow(ring, y - vl + yk + 1, height), t3 = ringRow(ring, y - vl + yk + 2, height), t4 = ringRow(ring, y - vl + yk + 3, height);
+			for (int x = 0; x < w; ++x) {
+				float a = acc[x];
+				a += v1 * t1[x];
+				a += v2 * t2[x];
+				a += v3 * t3[x];
+				a += v4 * t4[x];
+				acc[x] = a;
+			}
+		}
+		for (; yk < v.length; ++yk) {
+			final float vk = v[yk];
+			final float[] t = ringRow(ring, y - vl + yk, height);
+			for (int x = 0; x < w; ++x)
+				acc[x] += vk * t[x];
+		}
+	}
+
+	/** the ring row holding input row {@code y}, mirrored into the image at the borders */
+	private static float[] ringRow(final float[][] ring, final int y, final int height) {
+		return ring[Util.pingPong(y, height) % ring.length];
 	}
 }
