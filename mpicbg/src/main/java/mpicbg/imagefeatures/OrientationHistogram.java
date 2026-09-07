@@ -34,7 +34,10 @@ final class OrientationHistogram {
 	final static double BIN_SIZE = 2.0 * Math.PI / BINS;
 
 	final private float[] histogram_bins = new float[BINS];
-	private float[] roiMag = new float[0], roiOri = new float[0];
+	/** the window with a one pixel border, its four shifted copies, and per pixel derivatives, weight, magnitude, orientation, bin */
+	private float[] pat = new float[0], patL = new float[0], patR = new float[0], patU = new float[0], patD = new float[0];
+	private float[] roiDx = new float[0], roiDy = new float[0], roiWin = new float[0], roiMag = new float[0], roiOri = new float[0];
+	private int[] roiBin = new int[0];
 
 	/**
 	 * Build the orientation histogram of the region around a candidate: the gradient magnitudes of
@@ -63,40 +66,78 @@ final class OrientationHistogram {
 					c[1] - Math.floor(c[1]),
 					false);
 		//FloatArrayToImagePlus( gaussianMask, "gaussianMask", 0, 0 ).show();
-
-		// get the gradients in a region arround the keypoints location
-		final FloatArray2DScaleOctave.Gradients src = octave.getGradients((int)Math.round(c[2]));
-		final int maskLength = gaussianMask.width * gaussianMask.width;
-		if (roiMag.length < maskLength) {
-			roiMag = new float[maskLength];
-			roiOri = new float[maskLength];
+		final int size = gaussianMask.width;
+		final int half_size = size / 2;
+		final int w2 = size + 2; // the window plus a one pixel border for the derivatives
+		final int patchLength = w2 * w2;
+		if (pat.length < patchLength) {
+			pat = new float[patchLength];
+			patL = new float[patchLength];
+			patR = new float[patchLength];
+			patU = new float[patchLength];
+			patD = new float[patchLength];
+			roiDx = new float[patchLength];
+			roiDy = new float[patchLength];
+			roiWin = new float[patchLength];
+			roiMag = new float[patchLength];
+			roiOri = new float[patchLength];
+			roiBin = new int[patchLength];
 		}
-		final float[] roiMag = this.roiMag, roiOri = this.roiOri;
+		final float[] roiMag = this.roiMag, roiOri = this.roiOri, mask = gaussianMask.data;
 
-		final int half_size = gaussianMask.width / 2;
-		int n = gaussianMask.width * gaussianMask.width - 1;
-		for (int yi = gaussianMask.width - 1; yi >= 0; --yi) {
-			final int ya = Math.max(0, Math.min(src.height - 1, (int)c[1] + yi - half_size));
-			final int ra_x = Math.min((int)c[0], src.width - 1);
-
-			for (int xi = gaussianMask.width - 1; xi >= 0; --xi) {
-				final int xa = Math.max(0, Math.min(src.width - 2, ra_x + xi - half_size));
-				final float der_x = src.derX(xa, ya), der_y = src.derY(xa, ya);
-				roiMag[n] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y);
-				roiOri[n] = (float)Math.atan2(der_y, der_x);
-				--n;
+		/*
+		 * Get the gradients in the window around the keypoint, weighted by the window. Window pixel
+		 * ( xi, yi ) lives at ( yi + 1 ) * w2 + xi + 1 of the padded scratch arrays; the padding positions
+		 * hold junk that is never read. In the interior, the window is copied with its border into pat and
+		 * the derivatives, weighted magnitudes and orientations are evaluated in flat passes over shifted
+		 * copies (the loops then have identical indices, which C2 vectorizes; the orientation stays scalar).
+		 */
+		final FloatArray2DScaleOctave.Gradients src = octave.getGradients((int)Math.round(c[2]));
+		final int cx = (int)c[0], cy = (int)c[1];
+		if (cx - half_size >= 1 && cx - half_size + size <= src.width - 1 && cy - half_size >= 1 && cy - half_size + size <= src.height - 1) {
+			final float[] pat = this.pat, patL = this.patL, patR = this.patR, patU = this.patU, patD = this.patD, dxs = this.roiDx, dys = this.roiDy, win = this.roiWin;
+			for (int py = 0; py < w2; ++py)
+				System.arraycopy(src.data, (cy - half_size - 1 + py) * src.width + cx - half_size - 1, pat, py * w2, w2);
+			System.arraycopy(pat, 0, patL, 1, patchLength - 1); // patL[ m ] = pat[ m - 1 ]
+			System.arraycopy(pat, 1, patR, 0, patchLength - 1); // patR[ m ] = pat[ m + 1 ]
+			System.arraycopy(pat, 0, patU, w2, patchLength - w2); // patU[ m ] = pat[ m - w2 ]
+			System.arraycopy(pat, w2, patD, 0, patchLength - w2); // patD[ m ] = pat[ m + w2 ]
+			for (int yi = 0; yi < size; ++yi)
+				System.arraycopy(mask, yi * size, win, (yi + 1) * w2 + 1, size);
+			for (int m = 0; m < patchLength; ++m) {
+				dxs[m] = (patR[m] - patL[m]) / 2;
+				dys[m] = (patD[m] - patU[m]) / 2;
+			}
+			for (int m = 0; m < patchLength; ++m)
+				roiMag[m] = FloatArray2DScaleOctave.Gradients.mag(dxs[m], dys[m]) * win[m];
+			for (int yi = 0; yi < size; ++yi) {
+				final int m0 = (yi + 1) * w2 + 1;
+				for (int xi = 0; xi < size; ++xi)
+					roiOri[m0 + xi] = (float)Math.atan2(dys[m0 + xi], dxs[m0 + xi]);
+			}
+		} else {
+			// the window reaches over the image border: clamp coordinates pixel by pixel
+			for (int yi = 0; yi < size; ++yi) {
+				final int ya = Math.max(0, Math.min(src.height - 1, cy + yi - half_size));
+				final int ra_x = Math.min(cx, src.width - 1);
+				final int m0 = (yi + 1) * w2 + 1;
+				for (int xi = 0; xi < size; ++xi) {
+					final int xa = Math.max(0, Math.min(src.width - 2, ra_x + xi - half_size));
+					final float der_x = src.derX(xa, ya), der_y = src.derY(xa, ya);
+					roiMag[m0 + xi] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y) * mask[yi * size + xi];
+					roiOri[m0 + xi] = (float)Math.atan2(der_y, der_x);
+				}
 			}
 		}
 
-		// and mask this region with the precalculated gaussion window
-		for (int i = 0; i < maskLength; ++i) {
-			roiMag[i] *= gaussianMask.data[i];
-		}
-
-		// build an orientation histogram of the region
-		for (int i = 0; i < maskLength; ++i) {
-			final int bin = Math.max(0, Math.min(BINS1, (int)((roiOri[i] + Math.PI) / BIN_SIZE)));
-			histogram_bins[bin] += roiMag[i];
+		// build an orientation histogram of the region: bins for the whole patch (vectorizes), accumulation in scan order
+		final int[] bin = this.roiBin;
+		for (int m = 0; m < patchLength; ++m)
+			bin[m] = Math.max(0, Math.min(BINS1, (int)((roiOri[m] + Math.PI) / BIN_SIZE)));
+		for (int yi = 0; yi < size; ++yi) {
+			final int m0 = (yi + 1) * w2 + 1;
+			for (int xi = 0; xi < size; ++xi)
+				histogram_bins[bin[m0 + xi]] += roiMag[m0 + xi];
 		}
 
 		return histogram_bins;
