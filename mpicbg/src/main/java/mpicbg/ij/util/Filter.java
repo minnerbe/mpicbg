@@ -389,27 +389,27 @@ public class Filter
 			temp.setMinAndMax(source.getMin(), source.getMax());
 			smoothForScale(temp, scale, sourceSigma, targetSigma);
 			if (scale == 1.0f) return temp;
-			return sampleRows((float[])temp.getPixels(), ow, oh, scale, w, h, null, source);
+			return sampleRows((float[])temp.getPixels(), ow, oh, scale, w, h, null, null, source);
 		}
 
 		final float[] src = (float[])source.getPixels();
-		if (sigma == 0) return sampleRows(src, ow, oh, scale, w, h, null, source);
+		if (sigma == 0) return sampleRows(src, ow, oh, scale, w, h, null, null, source);
 
 		// ImageJ's GaussianBlur.blurFloat: convolve rows, then columns, with ImageJ's kernel (accuracy 0.01) and edge rule
 		final GaussianBlur gb = new GaussianBlur();
-		final float[] tmp = new float[ow * oh];
-		blurRows(src, tmp, ow, oh, gb.makeGaussianKernel(sigma, 0.01, ow));
-		return sampleRows(tmp, ow, oh, scale, w, h, gb.makeGaussianKernel(sigma, 0.01, oh), source);
+		return sampleRows(src, ow, oh, scale, w, h, gb.makeGaussianKernel(sigma, 0.01, ow), gb.makeGaussianKernel(sigma, 0.01, oh), source);
 	}
 
 	/**
-	 * Nearest-neighbor sample {@code src} into a new {@code w}x{@code h} processor. If {@code kernel} is
-	 * not null, the rows that are sampled are first convolved vertically with it (rows that are never
-	 * sampled are skipped, which does not change any sampled value).
+	 * Nearest-neighbor sample {@code src} into a new {@code w}x{@code h} processor. If the kernels are
+	 * not null, the image is first blurred like ImageJ's {@code GaussianBlur.blurFloat} (rows, then
+	 * columns): the horizontally blurred rows are kept in a ring that stays in cache instead of a
+	 * full-size temporary image, and only the rows that are sampled are convolved vertically (rows that
+	 * are never sampled do not change any sampled value).
 	 */
 	private static FloatProcessor sampleRows(
 			final float[] src, final int ow, final int oh, final double scale, final int w, final int h,
-			final float[][] kernel, final FloatProcessor source
+			final float[][] kernelX, final float[][] kernelY, final FloatProcessor source
 	) {
 		final FloatProcessor target = new FloatProcessor( w, h );
 		target.setMinAndMax( source.getMin(), source.getMax() );
@@ -425,15 +425,27 @@ public class Filter
 		for ( int y = 0; y < h; ++y )
 			luty[ y ] = Math.min( oh1, Math.max( 0, ( int )Math.round( y / scale ) ) );
 
-		final float[] row = new float[ow], rowA = new float[ow], rowB = new float[ow];
+		final float[] row = new float[ow];
+		final int r = kernelY == null ? 1 : kernelY[0].length;
+		final float[][] ring = new float[2 * r - 1][kernelY == null ? 0 : ow]; // rows y - r + 1 to y + r - 1 contribute to row y
+		final float[] rowA = new float[ow], rowB = new float[ow], acc = new float[ow];
+		final float[] first = new float[ow], last = new float[ow]; // ImageJ's edge rule adds the first and last row of a column
+		if (kernelY != null) {
+			blurRow(src, 0, ow, kernelX, first, acc, rowA, rowB);
+			blurRow(src, oh1 * ow, ow, kernelX, last, acc, rowA, rowB);
+		}
+		int next = 0; // the next row to be blurred horizontally into the ring
 		for ( int y = 0; y < h; ++y )
 		{
 			final int yy = luty[y];
 			if (y == 0 || yy != luty[y - 1]) {
-				if (kernel == null)
+				if (kernelY == null)
 					System.arraycopy(src, yy * ow, row, 0, ow);
-				else
-					blurColumnsAt(src, ow, oh, kernel, yy, row, rowA, rowB);
+				else {
+					for (final int lastRow = Math.min(oh1, yy + r - 1); next <= lastRow; ++next)
+						blurRow(src, next * ow, ow, kernelX, ring[next % ring.length], acc, rowA, rowB);
+					blurColumnsAt(ring, first, last, oh, kernelY, yy, row);
+				}
 			}
 			final int p = y * w;
 			for ( int x = 0; x < w; ++x )
@@ -443,64 +455,76 @@ public class Filter
 	}
 
 	/**
-	 * Convolve all rows of {@code in} into {@code out} with the arithmetic of ImageJ's
-	 * {@code GaussianBlur.convolveLine}: {@code in[i]*kern[0] + sum_k kern[k]*(in[i-k] + in[i+k])},
+	 * Convolve the row of {@code in} starting at {@code p} into {@code out} with the arithmetic of
+	 * ImageJ's {@code GaussianBlur.convolveLine}: {@code in[i]*kern[0] + sum_k kern[k]*(in[i-k] + in[i+k])},
 	 * taps in ascending order, out-of-line pixels replaced by the edge pixel via the running kernel sum.
 	 * The interior is evaluated as one axpy per tap over contiguous scratch rows (C2 vectorizes it, see
 	 * {@link mpicbg.imagefeatures.Filter#convolveSeparable}), the edges pixel by pixel.
 	 */
-	private static void blurRows(final float[] in, final float[] out, final int w, final int h, final float[][] kernel) {
+	private static void blurRow(final float[] in, final int p, final int w, final float[][] kernel, final float[] out, final float[] acc, final float[] rowA, final float[] rowB) {
 		final float[] kern = kernel[0];
 		final int r = kern.length;
 		final float kern0 = kern[0];
 		final int firstPart = Math.min(r, w);
 		final int n = w - 2 * r; // interior pixels [ r, w - r )
-		final float[] acc = new float[Math.max(n, 0)], rowA = new float[Math.max(n, 0)], rowB = new float[Math.max(n, 0)];
-		for (int p = 0; p < w * h; p += w) {
-			if (n > 0) {
-				System.arraycopy(in, p + r, rowA, 0, n);
+		if (n > 0) {
+			System.arraycopy(in, p + r, rowA, 0, n);
+			for (int x = 0; x < n; ++x)
+				acc[x] = rowA[x] * kern0;
+			for (int k = 1; k < r; ++k) {
+				final float kk = kern[k];
+				System.arraycopy(in, p + r - k, rowA, 0, n);
+				System.arraycopy(in, p + r + k, rowB, 0, n);
 				for (int x = 0; x < n; ++x)
-					acc[x] = rowA[x] * kern0;
-				for (int k = 1; k < r; ++k) {
-					final float kk = kern[k];
-					System.arraycopy(in, p + r - k, rowA, 0, n);
-					System.arraycopy(in, p + r + k, rowB, 0, n);
-					for (int x = 0; x < n; ++x)
-						acc[x] += kk * (rowA[x] + rowB[x]);
-				}
-				System.arraycopy(acc, 0, out, p + r, n);
+					acc[x] += kk * (rowA[x] + rowB[x]);
 			}
-			for (int i = 0; i < firstPart; ++i)
-				out[p + i] = convolveEdgePixel(in, p, 1, i, w, kernel, true);
-			for (int i = Math.max(firstPart, w - r); i < w; ++i)
-				out[p + i] = convolveEdgePixel(in, p, 1, i, w, kernel, false);
+			System.arraycopy(acc, 0, out, r, n);
+		}
+		for (int i = 0; i < firstPart; ++i)
+			out[i] = convolveEdgePixel(in, p, 1, i, w, kernel, true);
+		for (int i = Math.max(firstPart, w - r); i < w; ++i)
+			out[i] = convolveEdgePixel(in, p, 1, i, w, kernel, false);
+	}
+
+	/**
+	 * Vertically convolve row {@code y} of the image whose rows {@code y - r + 1} to {@code y + r - 1} are
+	 * in {@code ring} (row {@code i} at {@code i % ring.length}) and whose first and last rows are
+	 * {@code first} and {@code last}, into {@code row}. Same arithmetic and order as {@link #blurRow}
+	 * and {@link #convolveEdgePixel}, but as row operations over the ring rows (which C2 vectorizes).
+	 */
+	private static void blurColumnsAt(final float[][] ring, final float[] first, final float[] last, final int h, final float[][] kernel, final int y, final float[] row) {
+		final float[] kern = kernel[0], kernSum = kernel[1];
+		final int r = kern.length;
+		final int w = row.length;
+		final float kern0 = kern[0];
+		final float[] c = ring[y % ring.length];
+		for (int x = 0; x < w; ++x)
+			row[x] = c[x] * kern0;
+		final boolean edge = y < r || y >= h - r;
+		if (edge) {
+			final boolean firstPart = y < Math.min(r, h);
+			if (firstPart || y < r) scaleAdd(row, kernSum[y], first);
+			if (firstPart ? y + r > h : y + r >= h) scaleAdd(row, kernSum[h - y - 1], last);
+		}
+		for (int k = 1; k < r; ++k) {
+			final float kk = kern[k];
+			final boolean hasA = y - k >= 0, hasB = y + k < h;
+			if (hasA && hasB) {
+				final float[] a = ring[(y - k) % ring.length], b = ring[(y + k) % ring.length];
+				for (int x = 0; x < w; ++x)
+					row[x] += kk * (a[x] + b[x]);
+			} else if (hasA) scaleAdd(row, kk, ring[(y - k) % ring.length]);
+			else if (hasB) scaleAdd(row, kk, ring[(y + k) % ring.length]);
+			else
+				for (int x = 0; x < w; ++x)
+					row[x] += kk * 0f; // ImageJ adds kern[ k ] * 0 here, which turns -0 into +0
 		}
 	}
 
-	/** Vertically convolve row {@code y} of {@code in} into {@code row}; same arithmetic as {@link #blurRows}. */
-	private static void blurColumnsAt(
-			final float[] in, final int w, final int h, final float[][] kernel, final int y,
-			final float[] row, final float[] rowA, final float[] rowB
-	) {
-		final float[] kern = kernel[0];
-		final int r = kern.length;
-		if (y >= r && y < h - r) {
-			final float kern0 = kern[0];
-			System.arraycopy(in, y * w, rowA, 0, w);
-			for (int x = 0; x < w; ++x)
-				row[x] = rowA[x] * kern0;
-			for (int k = 1; k < r; ++k) {
-				final float kk = kern[k];
-				System.arraycopy(in, (y - k) * w, rowA, 0, w);
-				System.arraycopy(in, (y + k) * w, rowB, 0, w);
-				for (int x = 0; x < w; ++x)
-					row[x] += kk * (rowA[x] + rowB[x]);
-			}
-		} else {
-			final boolean firstPart = y < Math.min(r, h);
-			for (int x = 0; x < w; ++x)
-				row[x] = convolveEdgePixel(in, x, w, y, h, kernel, firstPart);
-		}
+	/** {@code row += k * a} */
+	private static void scaleAdd(final float[] row, final float k, final float[] a) {
+		for (int x = 0; x < row.length; ++x)
+			row[x] += k * a[x];
 	}
 
 	/**
