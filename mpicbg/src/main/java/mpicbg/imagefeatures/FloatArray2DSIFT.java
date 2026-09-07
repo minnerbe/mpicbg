@@ -152,6 +152,10 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	/** per-candidate scratch buffers (a FloatArray2DSIFT instance is not thread-safe anyway) */
 	final private OrientationHistogram orientationHistogram = new OrientationHistogram();
 	final private float[] region0, region1, hist;
+	/** descriptor scratch: sampled derivatives, flat window, histogram bins and weights per sample */
+	final private float[] descDx, descDy, descriptorMaskFlat;
+	final private int[] descBinB, descBinT;
+	final private double[] descW0, descW1;
 
 	final static private int ORIENTATION_BINS = OrientationHistogram.BINS;
 	final static private double ORIENTATION_BIN_SIZE = OrientationHistogram.BIN_SIZE;
@@ -191,6 +195,13 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 		region0 = new float[fdWidth * fdWidth];
 		region1 = new float[fdWidth * fdWidth];
 		hist = new float[p.fdSize * p.fdSize * p.fdBins];
+		descDx = new float[fdWidth * fdWidth];
+		descDy = new float[fdWidth * fdWidth];
+		descriptorMaskFlat = new float[fdWidth * fdWidth];
+		descBinB = new int[fdWidth * fdWidth];
+		descBinT = new int[fdWidth * fdWidth];
+		descW0 = new double[fdWidth * fdWidth];
+		descW1 = new double[fdWidth * fdWidth];
 
 		final float two_sq_sigma = p.fdSize * p.fdSize * 8;
 		for ( int y = p.fdSize * 2 - 1; y >= 0; --y )
@@ -206,6 +217,9 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 				descriptorMask[ 2 * p.fdSize + y ][ 2 * p.fdSize + x ] = val;
 			}
 		}
+
+		for (int y = 0; y < fdWidth; ++y)
+			System.arraycopy(descriptorMask[y], 0, descriptorMaskFlat, y * fdWidth, fdWidth);
 
 		setInitialSigma( p.initialSigma );
 	}
@@ -254,6 +268,20 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	}
 
 	/**
+	 * Wrap a histogram bin into [ 0, bins ) like repeated {@code += bins} / {@code -= bins} would; valid
+	 * for bins in [ -3 * bins, 4 * bins ), and branch-free so that it vectorizes.
+	 */
+	private static int wrapBin(int b, final int bins) {
+		b += bins & (b >> 31);
+		b += bins & (b >> 31);
+		b += bins & (b >> 31);
+		b -= bins & ((bins - 1 - b) >> 31);
+		b -= bins & ((bins - 1 - b) >> 31);
+		b -= bins & ((bins - 1 - b) >> 31);
+		return b;
+	}
+
+	/**
 	 * sample the scaled and rotated gradients in a region around the
 	 * features location, the regions size is defined by
 	 * ( FEATURE_DESCRIPTOR_SIZE * 4 )^2 ( 4x4 subregions )
@@ -280,7 +308,9 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 		//FloatArray2D image = octave.getL( Math.round( c[ 2 ] ) );
 		//pattern = new FloatArray2D( FEATURE_DESCRIPTOR_WIDTH, FEATURE_DESCRIPTOR_WIDTH );
 
-		//! sample the region arround the keypoint location
+		//! sample the region arround the keypoint location: gather the derivatives first, then weigh and
+		//! rotate them in flat passes over the sample arrays (the magnitude pass vectorizes)
+		final float[] dxs = descDx, dys = descDy;
 		for ( int y = fdWidth - 1; y >= 0; --y )
 		{
 			final double ys =
@@ -309,53 +339,51 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 
 				// get the samples
 				final int region_p = fdWidth * y + x;
-				final float der_x = gradients.derX(xg, yg), der_y = gradients.derY(xg, yg);
-
-				// weigh the gradients
-				region0[region_p] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y) * descriptorMask[y][x];
-
-				// rotate the gradients orientation it with respect to the features orientation
-				region1[region_p] = (float)((float)Math.atan2(der_y, der_x) - orientation);
-
-				// TODO this is for test
-				//---------------------------------------------------------------------
-				//pattern.data[ region_p ] = image.data[ gradient_p ];
+				dxs[region_p] = gradients.derX(xg, yg);
+				dys[region_p] = gradients.derY(xg, yg);
 			}
 		}
 
+		// weigh the gradients
+		final float[] mask = descriptorMaskFlat;
+		for (int q = 0; q < region0.length; ++q)
+			region0[q] = FloatArray2DScaleOctave.Gradients.mag(dxs[q], dys[q]) * mask[q];
 
+		// rotate the gradients orientation it with respect to the features orientation
+		for (int q = 0; q < region1.length; ++q)
+			region1[q] = (float)((float)Math.atan2(dys[q], dxs[q]) - orientation);
 
 		Arrays.fill(hist, 0);
 
-		// build the orientation histograms of 4x4 subregions
+		// build the orientation histograms of 4x4 subregions: bins and weights of all samples first (vectorizes),
+		// then accumulate them in the original order
+		final int[] bb = descBinB, bt = descBinT;
+		final double[] w0 = descW0, w1 = descW1;
+		for (int q = 0; q < region1.length; ++q) {
+			final double bin_location = (region1[q] + Math.PI) / fdBinWidth;
+			final int bin_b = (int)(bin_location);
+			final double d = bin_location - bin_b;
+			final double t = region0[q];
+			bb[q] = wrapBin(bin_b, p.fdBins);
+			bt[q] = wrapBin(bin_b + 1, p.fdBins);
+			w0[q] = t * (1 - d);
+			w1[q] = t * d;
+		}
 		for ( int y = p.fdSize - 1; y >= 0; --y )
 		{
 			final int yp = p.fdSize * 16 * y;
 			for ( int x = p.fdSize - 1; x >= 0; --x )
 			{
 				final int xp = 4 * x;
+				final int h = (p.fdSize * y + x) * p.fdBins;
 				for ( int ysr = 3; ysr >= 0; --ysr )
 				{
 					final int ysrp = 4 * p.fdSize * ysr;
-					final int h = (p.fdSize * y + x) * p.fdBins;
 					for ( int xsr = 3; xsr >= 0; --xsr )
 					{
-						final double bin_location = (region1[yp + xp + ysrp + xsr] + Math.PI) / fdBinWidth;
-
-						int bin_b = ( int )( bin_location );
-						int bin_t = bin_b + 1;
-						final double d = bin_location - bin_b;
-
-						// wrap into [ 0, fdBins ); same as ( bin + 2 * fdBins ) % fdBins without the division
-						while (bin_b < 0) bin_b += p.fdBins;
-						while (bin_b >= p.fdBins) bin_b -= p.fdBins;
-						while (bin_t < 0) bin_t += p.fdBins;
-						while (bin_t >= p.fdBins) bin_t -= p.fdBins;
-
-						final double t = region0[yp + xp + ysrp + xsr];
-
-						hist[h + bin_b] += t * (1 - d);
-						hist[h + bin_t] += t * d;
+						final int q = yp + xp + ysrp + xsr;
+						hist[h + bb[q]] += w0[q];
+						hist[h + bt[q]] += w1[q];
 					}
 				}
 			}
