@@ -297,10 +297,8 @@ public class FloatArray2DMOPS extends FloatArray2DFeatureTransform< FloatArray2D
 			final int o,
 			final List< Feature > features )
 	{
-		final int ORIENTATION_BINS = 36;
-		final int ORIENTATION_BINS1 = ORIENTATION_BINS - 1;
-		final double ORIENTATION_BIN_SIZE = 2.0 * Math.PI / ORIENTATION_BINS;
-		final float[] histogram_bins = new float[ ORIENTATION_BINS ];
+		final int ORIENTATION_BINS = OrientationHistogram.BINS;
+		final double ORIENTATION_BIN_SIZE = OrientationHistogram.BIN_SIZE;
 
 		final int scale = 1 << o;
 
@@ -308,54 +306,7 @@ public class FloatArray2DMOPS extends FloatArray2DFeatureTransform< FloatArray2D
 
 		final double octave_sigma = octave.SIGMA[ 0 ] * Math.pow( 2.0, c[ 2 ] / ( double )octave.STEPS );
 
-		// create a circular gaussian window with sigma 1.5 times that of the feature
-		final FloatArray2D gaussianMask =
-			Filter.createGaussianKernelOffset(
-					octave_sigma * 1.5,
-					c[ 0 ] - Math.floor( c[ 0 ] ),
-					c[ 1 ] - Math.floor( c[ 1 ] ),
-					false );
-		//FloatArrayToImagePlus( gaussianMask, "gaussianMask", 0, 0 ).show();
-
-		// get the gradients in a region arround the keypoints location
-		final FloatArray2D[] src = octave.getL1( ( int )Math.round( c[ 2 ] ) );
-		final FloatArray2D[] gradientROI = new FloatArray2D[ 2 ];
-		gradientROI[ 0 ] = new FloatArray2D( gaussianMask.width, gaussianMask.width );
-		gradientROI[ 1 ] = new FloatArray2D( gaussianMask.width, gaussianMask.width );
-
-		final int half_size = gaussianMask.width / 2;
-		int n = gaussianMask.width * gaussianMask.width - 1;
-		for ( int yi = gaussianMask.width - 1; yi >= 0; --yi )
-		{
-			final int ra_y = src[ 0 ].width * Math.max( 0, Math.min( src[ 0 ].height - 1, ( int )c[ 1 ] + yi - half_size ) );
-			final int ra_x = ra_y + Math.min( ( int )c[ 0 ], src[ 0 ].width - 1 );
-
-			for ( int xi = gaussianMask.width - 1; xi >= 0; --xi )
-			{
-				final int pt = Math.max( ra_y, Math.min( ra_y + src[ 0 ].width - 2, ra_x + xi - half_size ) );
-				gradientROI[ 0 ].data[ n ] = src[ 0 ].data[ pt ];
-				gradientROI[ 1 ].data[ n ] = src[ 1 ].data[ pt ];
-				--n;
-			}
-		}
-
-		// and mask this region with the precalculated gaussion window
-		for ( int i = 0; i < gradientROI[ 0 ].data.length; ++i )
-		{
-			gradientROI[ 0 ].data[ i ] *= gaussianMask.data[ i ];
-		}
-
-		// TODO this is for test
-		//---------------------------------------------------------------------
-		//ImageArrayConverter.FloatArrayToImagePlus( gradientROI[ 0 ], "gaussianMaskedGradientROI", 0, 0 ).show();
-		//ImageArrayConverter.FloatArrayToImagePlus( gradientROI[ 1 ], "gaussianMaskedGradientROI", 0, 0 ).show();
-
-		// build an orientation histogram of the region
-		for ( int i = 0; i < gradientROI[ 0 ].data.length; ++i )
-		{
-			final int bin = Math.max( 0, Math.min( ORIENTATION_BINS1, ( int )( ( gradientROI[ 1 ].data[ i ] + Math.PI ) / ORIENTATION_BIN_SIZE ) ) );
-			histogram_bins[ bin ] += gradientROI[ 0 ].data[ i ];
-		}
+		final float[] histogram_bins = OrientationHistogram.compute(octave, c, octave_sigma);
 
 		// find the dominant orientation and interpolate it with respect to its two neighbours
 		int max_i = 0;
