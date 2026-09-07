@@ -261,20 +261,15 @@ public class FloatArray2DScaleOctave
 		}
 		else l = new FloatArray2D[ STEPS + 3 ];
 		l[ 0 ] = img;
+		d = new FloatArray2D[STEPS + 2];
+		for (int i = 0; i < d.length; ++i)
+			d[i] = new FloatArray2D(width, height);
+		// d[ i ] = ( l[ i + 1 ] - l[ i ] ) * K_MIN1_INV, written together with the level whose rows are in cache
 		for ( int i = 1; i < SIGMA_DIFF.length; ++i )
 		{
 			if ( state == State.STUB && i == STEPS ) continue;
-			l[ i ] = Filter.convolveSeparable( l[ 0 ], KERNEL_DIFF[ i ], KERNEL_DIFF[ i ] );
-		}
-		d = new FloatArray2D[ STEPS + 2 ];
-		for ( int i = 0; i < d.length; ++i )
-		{
-			d[ i ] = new FloatArray2D( l[ i ].width, l[ i ].height );
-			int j = i + 1;
-			for ( int k = 0; k < l[ i ].data.length; ++k )
-			{
-				d[ i ].data[ k ] = ( l[ j ].data[ k ] - l[ i ].data[ k ] ) * K_MIN1_INV;
-			}
+			final FloatArray2D upper = i + 1 < l.length ? l[i + 1] : null; // the stub, if it is the next level
+			l[i] = Filter.convolveSeparable(l[0], KERNEL_DIFF[i], KERNEL_DIFF[i], l[i - 1], d[i - 1], upper, upper == null ? null : d[i], K_MIN1_INV);
 		}
 		l1 = new FloatArray2D[ STEPS + 3 ][];
 		for ( int i = 0; i < l1.length; ++i )

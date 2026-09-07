@@ -271,13 +271,6 @@ public class Filter
 
     /**
 	 * Convolve an image with a horizontal and a vertical kernel.
-	 * <p>
-	 * Both passes iterate the kernel taps in the outer loop and stream along a contiguous row in the
-	 * inner loop, which C2 vectorizes. Every output pixel still accumulates its taps in ascending
-	 * order from tap 0, so the result is bit-identical to the scalar reduction. The horizontally
-	 * convolved rows are kept in a ring of {@code v.length} rows that stays in the L2 cache instead of
-	 * a full-size temporary image that would be written to and read back from memory.
-	 * </p>
 	 *
 	 * @param input the input image
 	 * @param h horizontal kernel
@@ -290,6 +283,34 @@ public class Filter
 			final float[] h,
 			final float[] v )
 	{
+		return convolveSeparable(input, h, v, null, null, null, null, 0);
+	}
+
+	/**
+	 * Convolve an image with a horizontal and a vertical kernel and, while each output row is still in
+	 * cache, also write the scaled differences to two other images:
+	 * {@code dLower = ( output - lower ) * scale} and {@code dUpper = ( upper - output ) * scale}.
+	 * These are the difference of Gaussian levels adjacent to a level of a
+	 * {@link FloatArray2DScaleOctave}; computing them here saves a pass over three full-size images per
+	 * level. Either pair may be null.
+	 * <p>
+	 * Both passes iterate the kernel taps in the outer loop and stream along a contiguous row in the
+	 * inner loop, which C2 vectorizes. Every output pixel still accumulates its taps in ascending
+	 * order from tap 0, so the result is bit-identical to the scalar reduction. The horizontally
+	 * convolved rows are kept in a ring of {@code v.length} rows that stays in the L2 cache instead of
+	 * a full-size temporary image that would be written to and read back from memory.
+	 * </p>
+	 */
+	final static public FloatArray2D convolveSeparable(
+			final FloatArray2D input,
+			final float[] h,
+			final float[] v,
+			final FloatArray2D lower,
+			final FloatArray2D dLower,
+			final FloatArray2D upper,
+			final FloatArray2D dUpper,
+			final float scale
+	) {
 		final int w = input.width;
 		final int height = input.height;
 		final FloatArray2D output = new FloatArray2D(w, height);
@@ -312,6 +333,7 @@ public class Filter
 		final float[][] ring = new float[v.length][w];
 		final float[] row = new float[w];
 		final float[] acc = new float[w];
+		final float[] diff = new float[w];
 
 		int next = 0; // the next input row to be convolved horizontally
 		for (int y = 0; y < height; ++y) {
@@ -319,7 +341,18 @@ public class Filter
 			for (final int last = Math.min(height - 1, y + vl); next <= last; ++next)
 				convolveRow(in, next * w, h, n, xb, xa, row, acc, ring[next % v.length]);
 			convolveColumns(ring, v, y, height, acc);
-			System.arraycopy(acc, 0, out, y * w, w);
+			final int r = y * w;
+			System.arraycopy(acc, 0, out, r, w);
+			if (dLower != null) {
+				System.arraycopy(lower.data, r, row, 0, w);
+				scaledDifference(diff, acc, row, scale);
+				System.arraycopy(diff, 0, dLower.data, r, w);
+			}
+			if (dUpper != null) {
+				System.arraycopy(upper.data, r, row, 0, w);
+				scaledDifference(diff, row, acc, scale);
+				System.arraycopy(diff, 0, dUpper.data, r, w);
+			}
 		}
 
 		return output;
@@ -402,5 +435,11 @@ public class Filter
 	/** the ring row holding input row {@code y}, mirrored into the image at the borders */
 	private static float[] ringRow(final float[][] ring, final int y, final int height) {
 		return ring[Util.pingPong(y, height) % ring.length];
+	}
+
+	/** {@code d = ( a - b ) * s} */
+	private static void scaledDifference(final float[] d, final float[] a, final float[] b, final float s) {
+		for (int x = 0; x < d.length; ++x)
+			d[x] = (a[x] - b[x]) * s;
 	}
 }
