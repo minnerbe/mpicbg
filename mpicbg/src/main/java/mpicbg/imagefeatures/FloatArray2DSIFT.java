@@ -351,7 +351,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 
 		// rotate the gradients orientation it with respect to the features orientation
 		for (int q = 0; q < region1.length; ++q)
-			region1[q] = (float)((float)Math.atan2(dys[q], dxs[q]) - orientation);
+			region1[q] = (float)(Filter.fastAtan2(dys[q], dxs[q]) - orientation);
 
 		Arrays.fill(hist, 0);
 

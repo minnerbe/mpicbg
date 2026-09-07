@@ -113,7 +113,7 @@ final class OrientationHistogram {
 			for (int yi = 0; yi < size; ++yi) {
 				final int m0 = (yi + 1) * w2 + 1;
 				for (int xi = 0; xi < size; ++xi)
-					roiOri[m0 + xi] = (float)Math.atan2(dys[m0 + xi], dxs[m0 + xi]);
+					roiOri[m0 + xi] = Filter.fastAtan2(dys[m0 + xi], dxs[m0 + xi]);
 			}
 		} else {
 			// the window reaches over the image border: clamp coordinates pixel by pixel
@@ -125,7 +125,7 @@ final class OrientationHistogram {
 					final int xa = Math.max(0, Math.min(src.width - 2, ra_x + xi - half_size));
 					final float der_x = src.derX(xa, ya), der_y = src.derY(xa, ya);
 					roiMag[m0 + xi] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y) * mask[yi * size + xi];
-					roiOri[m0 + xi] = (float)Math.atan2(der_y, der_x);
+					roiOri[m0 + xi] = Filter.fastAtan2(der_y, der_x);
 				}
 			}
 		}
