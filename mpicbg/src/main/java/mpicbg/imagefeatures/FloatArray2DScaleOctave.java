@@ -134,7 +134,10 @@ public class FloatArray2DScaleOctave
 	 *   that it is within a valid range
 	 *
 	 * @return reference to the gradients
+	 *
+	 * @deprecated use {@link #getGradients(int)}, which does not allocate full-size arrays
 	 */
+	@Deprecated
 	public FloatArray2D[] getL1( int i )
 	{
 		if ( l1[ i ] == null )
