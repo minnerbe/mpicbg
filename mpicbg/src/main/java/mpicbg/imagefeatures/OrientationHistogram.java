@@ -38,6 +38,8 @@ final class OrientationHistogram {
 	private float[] pat = new float[0], patL = new float[0], patR = new float[0], patU = new float[0], patD = new float[0];
 	private float[] roiDx = new float[0], roiDy = new float[0], roiWin = new float[0], roiMag = new float[0], roiOri = new float[0];
 	private int[] roiBin = new int[0];
+	/** separable orientation window: ex[ x ] * ey[ y ], sized to the largest window seen so far */
+	private float[] maskX = new float[0], maskY = new float[0];
 
 	/**
 	 * Build the orientation histogram of the region around a candidate: the gradient magnitudes of
@@ -58,15 +60,12 @@ final class OrientationHistogram {
 		final float[] histogram_bins = this.histogram_bins;
 		Arrays.fill(histogram_bins, 0);
 
-		// create a circular gaussian window with sigma 1.5 times that of the feature
-		final FloatArray2D gaussianMask =
-			Filter.createGaussianKernelOffset(
-					octave_sigma * 1.5,
-					c[0] - Math.floor(c[0]),
-					c[1] - Math.floor(c[1]),
-					false);
-		//FloatArrayToImagePlus( gaussianMask, "gaussianMask", 0, 0 ).show();
-		final int size = gaussianMask.width;
+		// create a circular gaussian window with sigma 1.5 times that of the feature.
+		// The window is separable: exp( -( dx² + dy² ) / s ) = exp( -dx² / s ) * exp( -dy² / s ), so
+		// 2 * size exp calls replace size² (mean 563 per candidate). Rounding differs in the last bit
+		// from the direct 2d evaluation of Filter.createGaussianKernelOffset.
+		final double mask_sigma = octave_sigma * 1.5;
+		final int size = Math.max(3, (int)(2 * Math.round(3 * mask_sigma) + 1));
 		final int half_size = size / 2;
 		final int w2 = size + 2; // the window plus a one pixel border for the derivatives
 		final int patchLength = w2 * w2;
@@ -82,8 +81,19 @@ final class OrientationHistogram {
 			roiMag = new float[patchLength];
 			roiOri = new float[patchLength];
 			roiBin = new int[patchLength];
+			maskX = new float[size];
+			maskY = new float[size];
 		}
-		final float[] roiMag = this.roiMag, roiOri = this.roiOri, mask = gaussianMask.data;
+		final float[] roiMag = this.roiMag, roiOri = this.roiOri, ex = this.maskX, ey = this.maskY;
+		{
+			final double two_sq_sigma = 2 * mask_sigma * mask_sigma;
+			final double offset_x = c[0] - Math.floor(c[0]), offset_y = c[1] - Math.floor(c[1]);
+			for (int i = 0; i < size; ++i) {
+				final double dx = i - half_size - offset_x, dy = i - half_size - offset_y;
+				ex[i] = (float)Math.exp(-dx * dx / two_sq_sigma);
+				ey[i] = (float)Math.exp(-dy * dy / two_sq_sigma);
+			}
+		}
 
 		/*
 		 * Get the gradients in the window around the keypoint, weighted by the window. Window pixel
@@ -102,8 +112,12 @@ final class OrientationHistogram {
 			System.arraycopy(pat, 1, patR, 0, patchLength - 1); // patR[ m ] = pat[ m + 1 ]
 			System.arraycopy(pat, 0, patU, w2, patchLength - w2); // patU[ m ] = pat[ m - w2 ]
 			System.arraycopy(pat, w2, patD, 0, patchLength - w2); // patD[ m ] = pat[ m + w2 ]
-			for (int yi = 0; yi < size; ++yi)
-				System.arraycopy(mask, yi * size, win, (yi + 1) * w2 + 1, size);
+			for (int yi = 0; yi < size; ++yi) {
+				final float wy = ey[yi];
+				final int m0 = (yi + 1) * w2 + 1;
+				for (int xi = 0; xi < size; ++xi)
+					win[m0 + xi] = wy * ex[xi];
+			}
 			for (int m = 0; m < patchLength; ++m) {
 				dxs[m] = (patR[m] - patL[m]) / 2;
 				dys[m] = (patD[m] - patU[m]) / 2;
@@ -120,11 +134,12 @@ final class OrientationHistogram {
 			for (int yi = 0; yi < size; ++yi) {
 				final int ya = Math.max(0, Math.min(src.height - 1, cy + yi - half_size));
 				final int ra_x = Math.min(cx, src.width - 1);
+				final float wy = ey[yi];
 				final int m0 = (yi + 1) * w2 + 1;
 				for (int xi = 0; xi < size; ++xi) {
 					final int xa = Math.max(0, Math.min(src.width - 2, ra_x + xi - half_size));
 					final float der_x = src.derX(xa, ya), der_y = src.derY(xa, ya);
-					roiMag[m0 + xi] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y) * mask[yi * size + xi];
+					roiMag[m0 + xi] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y) * (wy * ex[xi]);
 					roiOri[m0 + xi] = Filter.fastAtan2(der_y, der_x);
 				}
 			}
