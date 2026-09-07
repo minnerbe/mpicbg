@@ -155,7 +155,8 @@ public class Filter
 				for ( int y = size - 1; y >= 0; --y )
 				{
 					final float fy = ( float ) ( y - size / 2 );
-					final float val = ( float ) ( Math.exp( -( Math.pow( fx - offset_x, 2 ) + Math.pow( fy - offset_y, 2 ) ) / two_sq_sigma ) );
+					final double dx = fx - offset_x, dy = fy - offset_y; // Math.pow( d, 2 ) == d * d exactly
+					final float val = (float) (Math.exp(-(dx * dx + dy * dy) / two_sq_sigma));
 					kernel.set( val, x, y );
 				}
 			}
@@ -201,7 +202,8 @@ public class Filter
 				for ( int y = size - 1; y >= 0; --y )
 				{
 					final double fy = y - size / 2;
-					final double val = Math.exp( -( Math.pow( fx - offset_x, 2 ) + Math.pow( fy - offset_y, 2 ) ) / two_sq_sigma );
+					final double dx = fx - offset_x, dy = fy - offset_y; // Math.pow( d, 2 ) == d * d exactly
+					final double val = Math.exp(-(dx * dx + dy * dy) / two_sq_sigma);
 					kernel.set( ( float )val, x, y );
 				}
 			}

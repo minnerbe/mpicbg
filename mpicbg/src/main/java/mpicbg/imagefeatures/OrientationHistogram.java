@@ -21,14 +21,20 @@
  */
 package mpicbg.imagefeatures;
 
+import java.util.Arrays;
+
 /**
  * Histogram of the gradient orientations in a Gaussian window around a candidate, from which
- * {@link FloatArray2DSIFT} and {@link FloatArray2DMOPS} pick the dominant orientations.
+ * {@link FloatArray2DSIFT} and {@link FloatArray2DMOPS} pick the dominant orientations. An
+ * instance holds the scratch buffers of one thread of candidates and is not thread-safe.
  */
 final class OrientationHistogram {
 	final static int BINS = 36;
 	final static int BINS1 = BINS - 1;
 	final static double BIN_SIZE = 2.0 * Math.PI / BINS;
+
+	final private float[] histogram_bins = new float[BINS];
+	private float[] roiMag = new float[0], roiOri = new float[0];
 
 	/**
 	 * Build the orientation histogram of the region around a candidate: the gradient magnitudes of
@@ -39,13 +45,15 @@ final class OrientationHistogram {
 	 * @param c candidate {@code 0=>x, 1=>y, 2=>scale index}
 	 * @param octave_sigma the candidate's sigma in the octave
 	 *
-	 * @return the histogram
+	 * @return the histogram, a buffer of this instance that the next call overwrites
 	 */
-	static float[] compute(
+	float[] compute(
 			final FloatArray2DScaleOctave octave,
 			final double[] c,
-			final double octave_sigma) {
-		final float[] histogram_bins = new float[BINS];
+			final double octave_sigma
+	) {
+		final float[] histogram_bins = this.histogram_bins;
+		Arrays.fill(histogram_bins, 0);
 
 		// create a circular gaussian window with sigma 1.5 times that of the feature
 		final FloatArray2D gaussianMask =
@@ -58,9 +66,12 @@ final class OrientationHistogram {
 
 		// get the gradients in a region arround the keypoints location
 		final FloatArray2DScaleOctave.Gradients src = octave.getGradients((int)Math.round(c[2]));
-		final FloatArray2D[] gradientROI = new FloatArray2D[2];
-		gradientROI[0] = new FloatArray2D(gaussianMask.width, gaussianMask.width);
-		gradientROI[1] = new FloatArray2D(gaussianMask.width, gaussianMask.width);
+		final int maskLength = gaussianMask.width * gaussianMask.width;
+		if (roiMag.length < maskLength) {
+			roiMag = new float[maskLength];
+			roiOri = new float[maskLength];
+		}
+		final float[] roiMag = this.roiMag, roiOri = this.roiOri;
 
 		final int half_size = gaussianMask.width / 2;
 		int n = gaussianMask.width * gaussianMask.width - 1;
@@ -71,21 +82,21 @@ final class OrientationHistogram {
 			for (int xi = gaussianMask.width - 1; xi >= 0; --xi) {
 				final int xa = Math.max(0, Math.min(src.width - 2, ra_x + xi - half_size));
 				final float der_x = src.derX(xa, ya), der_y = src.derY(xa, ya);
-				gradientROI[0].data[n] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y);
-				gradientROI[1].data[n] = (float)Math.atan2(der_y, der_x);
+				roiMag[n] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y);
+				roiOri[n] = (float)Math.atan2(der_y, der_x);
 				--n;
 			}
 		}
 
 		// and mask this region with the precalculated gaussion window
-		for (int i = 0; i < gradientROI[0].data.length; ++i) {
-			gradientROI[0].data[i] *= gaussianMask.data[i];
+		for (int i = 0; i < maskLength; ++i) {
+			roiMag[i] *= gaussianMask.data[i];
 		}
 
 		// build an orientation histogram of the region
-		for (int i = 0; i < gradientROI[0].data.length; ++i) {
-			final int bin = Math.max(0, Math.min(BINS1, (int)((gradientROI[1].data[i] + Math.PI) / BIN_SIZE)));
-			histogram_bins[bin] += gradientROI[0].data[i];
+		for (int i = 0; i < maskLength; ++i) {
+			final int bin = Math.max(0, Math.min(BINS1, (int)((roiOri[i] + Math.PI) / BIN_SIZE)));
+			histogram_bins[bin] += roiMag[i];
 		}
 
 		return histogram_bins;

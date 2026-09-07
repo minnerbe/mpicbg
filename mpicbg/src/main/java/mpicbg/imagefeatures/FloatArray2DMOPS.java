@@ -131,6 +131,9 @@ public class FloatArray2DMOPS extends FloatArray2DFeatureTransform< FloatArray2D
 	 */
 	private final FloatArray2DScaleOctaveDoGDetector dog;
 
+	/** per-candidate scratch (a FloatArray2DMOPS instance is not thread-safe anyway) */
+	private final OrientationHistogram orientationHistogram = new OrientationHistogram();
+
 	/**
 	 * Constructor
 	 */
@@ -306,7 +309,7 @@ public class FloatArray2DMOPS extends FloatArray2DFeatureTransform< FloatArray2D
 
 		final double octave_sigma = octave.SIGMA[ 0 ] * Math.pow( 2.0, c[ 2 ] / ( double )octave.STEPS );
 
-		final float[] histogram_bins = OrientationHistogram.compute(octave, c, octave_sigma);
+		final float[] histogram_bins = orientationHistogram.compute(octave, c, octave_sigma);
 
 		// find the dominant orientation and interpolate it with respect to its two neighbours
 		int max_i = 0;

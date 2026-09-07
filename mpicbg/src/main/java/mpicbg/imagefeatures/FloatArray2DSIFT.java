@@ -22,6 +22,7 @@
 package mpicbg.imagefeatures;
 
 import java.io.Serializable;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Vector;
@@ -148,6 +149,10 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	 */
 	final private float[][] descriptorMask;
 
+	/** per-candidate scratch buffers (a FloatArray2DSIFT instance is not thread-safe anyway) */
+	final private OrientationHistogram orientationHistogram = new OrientationHistogram();
+	final private float[] region0, region1, hist;
+
 	final static private int ORIENTATION_BINS = OrientationHistogram.BINS;
 	final static private double ORIENTATION_BIN_SIZE = OrientationHistogram.BIN_SIZE;
 
@@ -183,6 +188,9 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 		fdBinWidth = 2.0f * ( float )Math.PI / ( float )p.fdBins;
 
 		descriptorMask = new float[ fdWidth ][ fdWidth ];
+		region0 = new float[fdWidth * fdWidth];
+		region1 = new float[fdWidth * fdWidth];
+		hist = new float[p.fdSize * p.fdSize * p.fdBins];
 
 		final float two_sq_sigma = p.fdSize * p.fdSize * 8;
 		for ( int y = p.fdSize * 2 - 1; y >= 0; --y )
@@ -264,14 +272,6 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	{
 		final FloatArray2DScaleOctave octave = octaves[ o ];
 		final FloatArray2DScaleOctave.Gradients gradients = octave.getGradients((int)Math.round(c[2]));
-		final FloatArray2D[] region = new FloatArray2D[ 2 ];
-
-		region[ 0 ] = new FloatArray2D(
-				fdWidth,
-				fdWidth );
-		region[ 1 ] = new FloatArray2D(
-				fdWidth,
-				fdWidth );
 		final double cos_o = Math.cos( orientation );
 		final double sin_o = Math.sin( orientation );
 
@@ -312,10 +312,10 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 				final float der_x = gradients.derX(xg, yg), der_y = gradients.derY(xg, yg);
 
 				// weigh the gradients
-				region[0].data[region_p] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y) * descriptorMask[y][x];
+				region0[region_p] = FloatArray2DScaleOctave.Gradients.mag(der_x, der_y) * descriptorMask[y][x];
 
 				// rotate the gradients orientation it with respect to the features orientation
-				region[1].data[region_p] = (float)((float)Math.atan2(der_y, der_x) - orientation);
+				region1[region_p] = (float)((float)Math.atan2(der_y, der_x) - orientation);
 
 				// TODO this is for test
 				//---------------------------------------------------------------------
@@ -325,7 +325,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 
 
 
-		final float[][][] hist = new float[ p.fdSize ][ p.fdSize ][ p.fdBins ];
+		Arrays.fill(hist, 0);
 
 		// build the orientation histograms of 4x4 subregions
 		for ( int y = p.fdSize - 1; y >= 0; --y )
@@ -337,9 +337,10 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 				for ( int ysr = 3; ysr >= 0; --ysr )
 				{
 					final int ysrp = 4 * p.fdSize * ysr;
+					final int h = (p.fdSize * y + x) * p.fdBins;
 					for ( int xsr = 3; xsr >= 0; --xsr )
 					{
-						final double bin_location = ( region[ 1 ].data[ yp + xp + ysrp + xsr ] + Math.PI ) / fdBinWidth;
+						final double bin_location = (region1[yp + xp + ysrp + xsr] + Math.PI) / fdBinWidth;
 
 						int bin_b = ( int )( bin_location );
 						int bin_t = bin_b + 1;
@@ -348,10 +349,10 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 						bin_b = ( bin_b + 2 * p.fdBins ) % p.fdBins;
 						bin_t = ( bin_t + 2 * p.fdBins ) % p.fdBins;
 
-						final double t = region[ 0 ].data[ yp + xp + ysrp + xsr ];
+						final double t = region0[yp + xp + ysrp + xsr];
 
-						hist[ y ][ x ][ bin_b ] += t * ( 1 - d );
-						hist[ y ][ x ][ bin_t ] += t * d;
+						hist[h + bin_b] += t * (1 - d);
+						hist[h + bin_t] += t * d;
 					}
 				}
 			}
@@ -368,7 +369,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 			{
 				for ( int b = p.fdBins - 1; b >= 0; --b )
 				{
-					desc[ i ] = hist[ y ][ x ][ b ];
+					desc[i] = hist[(p.fdSize * y + x) * p.fdBins + b];
 					if ( desc[ i ] > max_bin_val ) max_bin_val = desc[ i ];
 					++i;
 				}
@@ -404,7 +405,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 
 		final double octave_sigma = octave.SIGMA[ 0 ] * Math.pow( 2.0, c[ 2 ] / octave.STEPS );
 
-		final float[] histogram_bins = OrientationHistogram.compute(octave, c, octave_sigma);
+		final float[] histogram_bins = orientationHistogram.compute(octave, c, octave_sigma);
 
 		// find the dominant orientation and interpolate it with respect to its two neighbours
 		int max_i = 0;
