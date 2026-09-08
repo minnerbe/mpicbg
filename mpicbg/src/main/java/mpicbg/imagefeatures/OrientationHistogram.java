@@ -167,7 +167,7 @@ final class OrientationHistogram {
 				final int raX = Math.min(cx, src.width - 1);
 				final int rowY = (y + 1) * patchSize + 1;
 				for (int x = 0; x < windowSize; ++x) {
-					final int xa = Math.max(0, Math.min(src.width - 2, raX + x - halfSize));
+					final int xa = Math.max(0, Math.min(src.width - 1, raX + x - halfSize));
 					final float Dx = src.derX(xa, ya);
 					final float Dy = src.derY(xa, ya);
 					winMag[rowY + x] = FloatArray2DScaleOctave.Gradients.mag(Dx, Dy) * winWei[rowY + x];
