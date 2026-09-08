@@ -221,23 +221,32 @@ public class Filter
 	}
 
 	/**
-	 * atan2 with an absolute error below 1e-6 rad using the Cephes atanf polynomial after
-	 * reducing the argument to [0, tan( pi / 8 )]. Several times faster than the fdlibm
-	 * {@link Math#atan2} and, unlike it, platform independent.
+	 * atan2 with an absolute error below 1e-6 rad using the Cephes atanf rational polynomial after
+	 * reducing the argument to [0, tan(pi / 8)]. Several times faster than {@link Math#atan2}
+	 * and, unlike it, platform independent.
 	 */
 	final public static float fastAtan2(final float y, final float x) {
-		final double ax = Math.abs(x), ay = Math.abs(y);
-		if (ax == 0 && ay == 0) return 0;
+		final double ax = Math.abs(x);
+		final double ay = Math.abs(y);
+
+		if (ax == 0 && ay == 0)
+			return 0;
+
 		double t = ay <= ax ? ay / ax : ax / ay; // in [0, 1]
 		double r = 0;
-		if (t > 0.4142135623730950) { // tan( pi / 8 ): atan( t ) = pi / 4 + atan( ( t - 1 ) / ( t + 1 ) )
+		if (t > 0.4142135623730950) {
+			// tan(pi / 8): atan(t) = pi / 4 + atan((t - 1) / (t + 1))
 			t = (t - 1) / (t + 1);
 			r = Math.PI / 4;
 		}
+
 		final double z = t * t;
 		r += (((8.05374449538e-2 * z - 1.38776856032e-1) * z + 1.99777106478e-1) * z - 3.33329491539e-1) * z * t + t;
-		if (ay > ax) r = Math.PI / 2 - r;
-		if (x < 0) r = Math.PI - r;
+		if (ay > ax)
+			r = Math.PI / 2 - r;
+		if (x < 0)
+			r = Math.PI - r;
+
 		return (float)(y < 0 ? -r : r);
 	}
 
