@@ -164,10 +164,9 @@ final class OrientationHistogram {
 			// The window reaches over the image border: clamp coordinates pixel by pixel
 			for (int y = 0; y < windowSize; ++y) {
 				final int ya = Math.max(0, Math.min(src.height - 1, winStartY + y));
-				final int raX = Math.min(cx, src.width - 1);
 				final int rowY = (y + 1) * patchSize + 1;
 				for (int x = 0; x < windowSize; ++x) {
-					final int xa = Math.max(0, Math.min(src.width - 1, raX + x - halfSize));
+					final int xa = Math.max(0, Math.min(src.width - 1, winStartX + x));
 					final float Dx = src.derX(xa, ya);
 					final float Dy = src.derY(xa, ya);
 					winMag[rowY + x] = FloatArray2DScaleOctave.Gradients.mag(Dx, Dy) * winWei[rowY + x];
