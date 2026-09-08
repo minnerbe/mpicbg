@@ -27,7 +27,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.function.Consumer;
 
 import mpicbg.imagefeatures.Feature;
 import mpicbg.imagefeatures.FloatArray2D;
@@ -173,12 +172,11 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 			final double radius,
 			final float rod
 	) {
-		final NearestNeighborSearch neighborSearch = new RadiusSearch(fs2, radius);
+		final RadiusSearch neighborSearch = new RadiusSearch(fs2, radius);
 		final List<PointMatch> matches = new ArrayList<>();
 
 		for (final Feature f1 : fs1) {
-			final FeatureAccumulator accumulator = neighborSearch.findFor(f1);
-			final Feature best = accumulator.getClosestChecked(rod);
+			final Feature best = neighborSearch.findFor(f1, rod);
 
 			if (best != null) {
 				final Point p1 = new Point(new double[]{f1.location[0], f1.location[1]});
@@ -224,50 +222,17 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 	}
 
 
-	private static class FeatureAccumulator implements Consumer<Feature> {
-		private final Feature target;
+	/** Candidates per block: 128 components x 1024 x 4 bytes = 512 KiB, half of a typical L2. */
+	private static final int CANDIDATE_BLOCK = 1024;
 
-		private Feature currentClosest = null;
-		private double bestDistance = Double.MAX_VALUE;
-		private double secondBestDistance = Double.MAX_VALUE;
-
-		public FeatureAccumulator(Feature target) {
-			this.target = target;
-		}
-
-		@Override
-		public void accept(Feature feature) {
-			final double d = target.descriptorDistance(feature);
-
-			if (d < bestDistance) {
-				secondBestDistance = bestDistance;
-				bestDistance = d;
-				currentClosest = feature;
-			} else if (d < secondBestDistance) {
-				secondBestDistance = d;
-			}
-		}
-
-		public Feature getClosestChecked(double maxRatioOfDistances) {
-			if (secondBestDistance < Double.MAX_VALUE && bestDistance / secondBestDistance < maxRatioOfDistances) {
-				return currentClosest;
-			} else {
-				return null;
-			}
-		}
-	}
-
-	/**
-	 * Candidate descriptors stored component-major ({@code component[k][j]} is component k of
+	/*
+	 * Candidate descriptors stored column-major ({@code transposed[k][j]} is component k of
 	 * candidate j) so that the distances of one target to all candidates can be computed with the
 	 * candidate index as the innermost loop. That loop is a plain element-wise update of
 	 * {@code dist[j]} with no cross-iteration dependency, which C2 auto-vectorizes; a per-pair sum
 	 * over the 128 components is a float reduction, which it never vectorizes. The summation order
 	 * per pair is the same as in {@link Feature#descriptorDistance}, so results are bit-identical.
 	 */
-	/** Candidates per block: 128 components x 1024 x 4 bytes = 512 KiB, half of a typical L2. */
-	private static final int CANDIDATE_BLOCK = 1024;
-
 	private static class TransposedFeatures {
 		private final Feature[] features;
 		private final float[][] component;
@@ -316,26 +281,7 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 		}
 	}
 
-	private interface NearestNeighborSearch {
-		FeatureAccumulator findFor(Feature f);
-	}
-
-	private static class BruteForceSearch implements NearestNeighborSearch {
-		private final Collection<Feature> features;
-
-		public BruteForceSearch(Collection<Feature> features) {
-			this.features = features;
-		}
-
-		@Override
-		public FeatureAccumulator findFor(Feature f) {
-			final FeatureAccumulator acc = new FeatureAccumulator(f);
-			features.forEach(acc);
-			return acc;
-		}
-	}
-
-	private static class RadiusSearch implements NearestNeighborSearch {
+	private static class RadiusSearch {
 
 		private static class Node {
 			private final Feature feature;
@@ -351,6 +297,11 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 
 		private final double radiusSquared;
 		private final Node root;
+
+		private Feature target;
+		private Feature currentClosest;
+		private double bestDistance;
+		private double secondBestDistance;
 
 		public RadiusSearch(Collection<Feature> features, double radius) {
 			this.radiusSquared = radius * radius;
@@ -375,19 +326,21 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 			return new Node(medianFeature, buildTree(left, depth + 1), buildTree(right, depth + 1));
 		}
 
-		@Override
-		public FeatureAccumulator findFor(Feature f) {
-			final FeatureAccumulator acc = new FeatureAccumulator(f);
-			search(root, f, 0, acc);
-			return acc;
+		public Feature findFor(Feature f, double maxRatioOfDistances) {
+			target = f;
+			currentClosest = null;
+			bestDistance = Double.MAX_VALUE;
+			secondBestDistance = Double.MAX_VALUE;
+			search(root, 0);
+
+			if (secondBestDistance < Double.MAX_VALUE && bestDistance / secondBestDistance < maxRatioOfDistances) {
+				return currentClosest;
+			} else {
+				return null;
+			}
 		}
 
-		private void search(
-				final Node node,
-				final Feature target,
-				final int depth,
-				final FeatureAccumulator acc
-		) {
+		private void search(final Node node, final int depth) {
 			if (node == null) {
 				return;
 			}
@@ -395,7 +348,14 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 			// Include node if it is within the radius
 			final double distanceSquared = locationDistanceSquared(target, node.feature);
 			if (distanceSquared < radiusSquared) {
-				acc.accept(node.feature);
+				final double d = target.descriptorDistance(node.feature);
+				if (d < bestDistance) {
+					secondBestDistance = bestDistance;
+					bestDistance = d;
+					currentClosest = node.feature;
+				} else if (d < secondBestDistance) {
+					secondBestDistance = d;
+				}
 			}
 
 			// Check where the target is relative to the decision boundary
@@ -411,11 +371,11 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 				near = node.right;
 				far = node.left;
 			}
-			search(near, target, depth + 1, acc);
+			search(near, depth + 1);
 
 			// Only search the other subtree if it is within the radius
 			if (far != null && distanceToDecisionBoundary * distanceToDecisionBoundary < radiusSquared) {
-				search(far, target, depth + 1, acc);
+				search(far, depth + 1);
 			}
 		}
 
