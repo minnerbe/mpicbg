@@ -90,9 +90,9 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 			final float rod
 	) {
 		final Feature[] targets = fs1.toArray(new Feature[0]);
-		final TransposedFeatures candidates = new TransposedFeatures(fs2);
-		final int nCandidates = candidates.size();
-		final float[] dist = new float[nCandidates];
+		final Feature[] candidates = fs2.toArray(new Feature[0]);
+		final TransposedFeatures transposed = new TransposedFeatures(candidates);
+		final float[] dist = new float[candidates.length];
 
 		// Running nearest and second-nearest candidate per target, continued across candidate
 		// blocks. Blocks keep the transposed sub-matrix (128 x block x 4 bytes) L2-resident while
@@ -103,11 +103,11 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 		java.util.Arrays.fill(best, Float.MAX_VALUE);
 		java.util.Arrays.fill(second, Float.MAX_VALUE);
 
-		for (int blockStart = 0; blockStart < nCandidates; blockStart += CANDIDATE_BLOCK) {
-			final int blockEnd = Math.min(nCandidates, blockStart + CANDIDATE_BLOCK);
+		for (int blockStart = 0; blockStart < candidates.length; blockStart += CANDIDATE_BLOCK) {
+			final int blockEnd = Math.min(candidates.length, blockStart + CANDIDATE_BLOCK);
 
 			for (int i = 0; i < targets.length; ++i) {
-				candidates.squaredDistances(targets[i].descriptor, dist, blockStart, blockEnd);
+				transposed.squaredDistances(targets[i].descriptor, dist, blockStart, blockEnd);
 
 				// Scan distances, record index of closest candidate and best / second-best distance
 				for (int j = blockStart; j < blockEnd; ++j) {
@@ -125,7 +125,8 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 
 		for (int i = 0; i < targets.length; ++i) {
 			if (second[i] < Float.MAX_VALUE && Math.sqrt(best[i]) / Math.sqrt(second[i]) < rod) {
-				final Feature f1 = targets[i], f2 = candidates.features[closest[i]];
+				final Feature f1 = targets[i];
+				final Feature f2 = candidates[closest[i]];
 				final Point p1 = new Point(new double[]{f1.location[0], f1.location[1]});
 				final Point p2 = new Point(new double[]{f2.location[0], f2.location[1]});
 				matches.add(new PointMatch(p1, p2));
@@ -223,24 +224,24 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 	private static final int CANDIDATE_BLOCK = 1024;
 
 	/*
-	 * Candidate descriptors stored column-major ({@code transposed[k][j]} is component k of
-	 * candidate j) so that the distances of one target to all candidates can be computed with the
-	 * candidate index as the innermost loop. That loop is a plain element-wise update of
-	 * {@code dist[j]} with no cross-iteration dependency, which C2 auto-vectorizes; a per-pair sum
-	 * over the 128 components is a float reduction, which it never vectorizes. The summation order
-	 * per pair is the same as in {@link Feature#descriptorDistance}, so results are bit-identical.
+	 * Candidate descriptors stored transposed and column-major ({@code transposed[k][j]} is
+	 * component k of candidate j). Thus, the distances of one target to all candidates can be
+	 * computed with the candidate index as the innermost loop. That loop is a plain element-wise
+	 * update of {@code dist[j]} with no cross-iteration dependency, which C2 auto-vectorizes; a
+	 * per-pair sum over the 128 components is a float reduction, which it never vectorizes. The
+	 * summation order per pair is the same as in {@link Feature#descriptorDistance}, so results
+	 * are bit-identical.
 	 */
 	private static class TransposedFeatures {
-		private final Feature[] features;
+		private final int n;
 		private final float[][] transposed;
 
-		TransposedFeatures(final Collection<Feature> fs) {
-			features = fs.toArray(new Feature[0]);
+		/** Transpose {@code features} for vectorization during distance calculations. */
+		TransposedFeatures(final Feature[] features) {
 			final int m = features.length;
-			final int n = (m == 0) ? 0 : features[0].descriptor.length;
-
-			// Transpose the feature descriptors for vectorization during distance calculations
+			n = (m == 0) ? 0 : features[0].descriptor.length;
 			transposed = new float[n][m];
+
 			for (int j = 0; j < m; ++j) {
 				final float[] d = features[j].descriptor;
 				for (int k = 0; k < n; ++k) {
@@ -249,26 +250,21 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 			}
 		}
 
-		int size() {
-			return features.length;
-		}
-
 		/**
-		 * Squared distances of {@code t} to the candidates {@code start} (inclusive)
+		 * Squared distances of {@code target} to the candidates {@code start} (inclusive)
 		 * to {@code end} (exclusive) into {@code dist}.
 		 */
-		void squaredDistances(final float[] t, final float[] dist, final int start, final int end) {
-			final int n = transposed.length;
+		void squaredDistances(final float[] target, final float[] dist, final int start, final int end) {
 			java.util.Arrays.fill(dist, start, end, 0f);
 
 			// Manually unroll the loops by 4 to help the compiler vectorize it
 			int k = 0;
 			for (; k < n - 3; k += 4) {
 				// Load 4 components of the target descriptor
-				final float t0 = t[k];
-				final float t1 = t[k + 1];
-				final float t2 = t[k + 2];
-				final float t3 = t[k + 3];
+				final float t0 = target[k];
+				final float t1 = target[k + 1];
+				final float t2 = target[k + 2];
+				final float t3 = target[k + 3];
 
 				// Load 4 column-blocks of the transposed candidate descriptors
 				final float[] c0 = transposed[k];
@@ -288,7 +284,7 @@ abstract public class FeatureTransform< T extends FloatArray2DFeatureTransform< 
 
 			// Cleanup loop for any remaining components
 			for (; k < n; ++k) {
-				final float tk = t[k];
+				final float tk = target[k];
 				final float[] ck = transposed[k];
 				for (int j = start; j < end; ++j) {
 					final float a = tk - ck[j];
