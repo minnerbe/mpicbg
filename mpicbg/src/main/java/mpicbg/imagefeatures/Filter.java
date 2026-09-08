@@ -130,7 +130,10 @@ public class Filter
 	 * Create a normalized 2d gaussian impulse with appropriate size with its
 	 * center slightly moved away from the middle.
 	 *
+	 * @deprecated unused; the separable mask exp(-dx²/s) * exp(-dy²/s) replaces this in
+	 *   {@link OrientationHistogram}
 	 */
+	@Deprecated
 	final static public FloatArray2D createGaussianKernelOffset(
 			final float sigma,
 			final float offset_x,
@@ -177,7 +180,10 @@ public class Filter
 	 * Create a normalized 2d gaussian impulse with appropriate size with its
 	 * center slightly moved away from the middle.
 	 *
+	 * @deprecated unused; the separable mask exp(-dx²/s) * exp(-dy²/s) replaces this in
+	 *   {@link OrientationHistogram}
 	 */
+	@Deprecated
 	final static public FloatArray2D createGaussianKernelOffset(
 			final double sigma,
 			final double offset_x,
