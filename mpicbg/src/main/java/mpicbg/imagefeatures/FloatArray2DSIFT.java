@@ -76,7 +76,6 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 
 		/**
 		 * Size limits for scale octaves in px:
-		 *
 		 * {@code minOctaveSize < octave < maxOctaveSize}
 		 */
 		public int maxOctaveSize = 1024;
@@ -321,7 +320,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 		//FloatArray2D image = octave.getL( Math.round( c[ 2 ] ) );
 		//pattern = new FloatArray2D( FEATURE_DESCRIPTOR_WIDTH, FEATURE_DESCRIPTOR_WIDTH );
 
-		//! sample the region arround the keypoint location: gather the derivatives first, then weigh and
+		//! sample the region around the keypoint location: gather the derivatives first, then weigh and
 		//! rotate them in flat passes over the sample arrays (the magnitude pass vectorizes)
 		for ( int y = fdWidth - 1; y >= 0; --y )
 		{
@@ -415,7 +414,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 				}
 			}
 		}
-		max_bin_val /= 0.2;
+		max_bin_val /= 0.2f;
 		for ( i = 0; i < desc.length; ++i )
 		{
 			desc[ i ] = ( float )Math.min( 1.0, desc[ i ] / max_bin_val );
@@ -425,9 +424,9 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	}
 
 	/**
-	 * assign orientation to the given candidate, if more than one orientations
+	 * assign orientation to the given candidate, if more than one orientation
 	 * found, duplicate the feature for each orientation
-	 *
+	 * <p>
 	 * estimate the feature descriptor for each of those candidates
 	 *
 	 * @param c candidate {@code 0=>x, 1=>y, 2=>scale index}
@@ -447,14 +446,14 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 
 		final float[] histogram_bins = orientationHistogram.compute(octave, c, octave_sigma);
 
-		// find the dominant orientation and interpolate it with respect to its two neighbours
+		// find the dominant orientation and interpolate it with respect to its two neighbors
 		int max_i = 0;
 		for ( int i = 0; i < ORIENTATION_BINS; ++i )
 		{
 			if ( histogram_bins[ i ] > histogram_bins[ max_i ] ) max_i = i;
 		}
 
-		/**
+		/*
 		 * interpolate orientation estimate the offset from center of the
 		 * parabolic extremum of the taylor series through env[1], derivatives
 		 * via central difference and laplace
@@ -474,7 +473,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 						//new double[]{ ( c[ 0 ] + 0.5f ) * scale - 0.5f, ( c[ 1 ] + 0.5f ) * scale - 0.5f },
 						createDescriptor( c, o, octave_sigma, orientation ) ) );
 
-		/**
+		/*
 		 * check if there is another significant orientation ( > 80% max )
 		 * if there is one, duplicate the feature and
 		 */
@@ -486,7 +485,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 					( max_i - 1 + ORIENTATION_BINS ) % ORIENTATION_BINS != i &&
 					histogram_bins[ i ] > 0.8 * histogram_bins[ max_i ] )
 			{
-				/**
+				/*
 				 * interpolate orientation estimate the offset from center of
 				 * the parabolic extremum of the taylor series through env[1],
 				 * derivatives via central difference and laplace
@@ -509,7 +508,6 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 				}
 			}
 		}
-		return;
 	}
 
 
@@ -520,9 +518,9 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	 *
 	 * @return detected features
 	 */
-	final private Vector< Feature > runOctave( final int o )
+	private Vector< Feature > runOctave( final int o )
 	{
-		final Vector< Feature > features = new Vector< Feature >();
+		final Vector< Feature > features = new Vector<>();
 		final FloatArray2DScaleOctave octave = octaves[ o ];
 		octave.build();
 		dog.run( octave );
@@ -542,7 +540,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	 */
 	public Vector< Feature > run()
 	{
-		final Vector< Feature > features = new Vector< Feature >();
+		final Vector< Feature > features = new Vector<>();
 		for ( int o = 0; o < octaves.length; ++o )
 		{
 			if ( octaves[ o ].state == FloatArray2DScaleOctave.State.EMPTY ) continue;
@@ -559,7 +557,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	 */
 	public Vector< Feature > run( final int max_size )
 	{
-		final Vector< Feature > features = new Vector< Feature >();
+		final Vector< Feature > features = new Vector<>();
 		for ( int o = 0; o < octaves.length; ++o )
 		{
 			if ( octaves[ o ].width <= max_size && octaves[ o ].height <= max_size )
@@ -587,7 +585,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 			final List< Feature > fs2,
 			final float rod )
 	{
-		final Vector< PointMatch > matches = new Vector< PointMatch >();
+		final Vector< PointMatch > matches = new Vector<>();
 
 		for ( final Feature f1 : fs1 )
 		{
@@ -664,7 +662,7 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 			final double max_id,
 			final double rod )
 	{
-		final Vector< PointMatch > matches = new Vector< PointMatch >();
+		final Vector< PointMatch > matches = new Vector<>();
 		final double min_sd = 1.0 / max_sd;
 
 		final int size = fs2.size();
@@ -771,12 +769,12 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	{
 		System.out.print( "estimating feature size histogram ..." );
 		final int num_features = features.size();
-		final double h[] = new double[ bins ];
-		final int hb[] = new int[ bins ];
+		final double[] h = new double[bins];
+		final int[] hb = new int[bins];
 
 		for ( final Feature f : features )
 		{
-			final int bin = ( int )Math.max( 0, Math.min( bins - 1, ( int )( Math.log( f.scale ) / Math.log( 2.0 ) * 28.0f ) ) );
+			final int bin = Math.max(0, Math.min(bins - 1, (int)(Math.log(f.scale) / Math.log(2.0) * 28.0f)));
 			++hb[ bin ];
 		}
 		for ( int i = 0; i < bins; ++i )
