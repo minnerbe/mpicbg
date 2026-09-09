@@ -144,18 +144,22 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 	private float[] sigma_diff;
 	private float[][] kernel_diff;
 
-	/**
-	 * evaluation mask for the feature descriptor square
-	 */
-	final private float[][] descriptorMask;
-
 	/** per-candidate scratch buffers (a FloatArray2DSIFT instance is not thread-safe anyway) */
 	final private OrientationHistogram orientationHistogram = new OrientationHistogram();
-	final private float[] region0, region1, hist;
-	/** descriptor scratch: sampled derivatives, flat window, histogram bins and weights per sample */
-	final private float[] descDx, descDy, descriptorMaskFlat;
-	final private int[] descBinB, descBinT;
-	final private double[] descW0, descW1;
+	final private float[] gaussian;
+
+	/** descriptor scratch: sampled derivatives, magnitude, orientation, histogram  */
+	final private float[] descDx;
+	final private float[] descDy;
+	final private float[] gradMag;
+	final private float[] gradOri;
+	final private float[] hist;
+
+	// Top and bottom histogram bins for each sample, and the weights for interpolating
+	final private int[] descBinB;
+	final private int[] descBinT;
+	final private float[] descW0;
+	final private float[] descW1;
 
 	final static private int ORIENTATION_BINS = OrientationHistogram.BINS;
 	final static private double ORIENTATION_BIN_SIZE = OrientationHistogram.BIN_SIZE;
@@ -191,35 +195,44 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 		fdWidth = 4 * p.fdSize;
 		fdBinWidth = 2.0f * ( float )Math.PI / ( float )p.fdBins;
 
-		descriptorMask = new float[ fdWidth ][ fdWidth ];
-		region0 = new float[fdWidth * fdWidth];
-		region1 = new float[fdWidth * fdWidth];
-		hist = new float[p.fdSize * p.fdSize * p.fdBins];
+		// Allocate scratch buffers for the feature descriptor
 		descDx = new float[fdWidth * fdWidth];
 		descDy = new float[fdWidth * fdWidth];
-		descriptorMaskFlat = new float[fdWidth * fdWidth];
+		gradMag = new float[fdWidth * fdWidth];
+		gradOri = new float[fdWidth * fdWidth];
+
 		descBinB = new int[fdWidth * fdWidth];
 		descBinT = new int[fdWidth * fdWidth];
-		descW0 = new double[fdWidth * fdWidth];
-		descW1 = new double[fdWidth * fdWidth];
+		descW0 = new float[fdWidth * fdWidth];
+		descW1 = new float[fdWidth * fdWidth];
 
-		final float two_sq_sigma = p.fdSize * p.fdSize * 8;
-		for ( int y = p.fdSize * 2 - 1; y >= 0; --y )
-		{
-			final float fy = ( float )y + 0.5f;
-			for ( int x = p.fdSize * 2 - 1; x >= 0; --x )
-			{
-				final float fx = ( float )x + 0.5f;
-				final float val = ( float )Math.exp( -( fy * fy + fx * fx ) / two_sq_sigma );
-				descriptorMask[ 2 * p.fdSize - 1 - y ][ 2 * p.fdSize - 1 - x ] = val;
-				descriptorMask[ 2 * p.fdSize + y ][ 2 * p.fdSize - 1 - x ] = val;
-				descriptorMask[ 2 * p.fdSize - 1 - y ][ 2 * p.fdSize + x ] = val;
-				descriptorMask[ 2 * p.fdSize + y ][ 2 * p.fdSize + x ] = val;
-			}
+		hist = new float[p.fdSize * p.fdSize * p.fdBins];
+		gaussian = new float[fdWidth * fdWidth];
+
+		// Create a (separable) gaussian mask for the feature descriptor square
+		final float[] wx = new float[2 * p.fdSize];
+		final float spread = p.fdSize * p.fdSize * 8;
+		for (int x = p.fdSize * 2 - 1; x >= 0; --x) {
+			final float fx = (float)x + 0.5f;
+			wx[x] = (float)Math.exp(-(fx * fx) / spread);
 		}
 
-		for (int y = 0; y < fdWidth; ++y)
-			System.arraycopy(descriptorMask[y], 0, descriptorMaskFlat, y * fdWidth, fdWidth);
+		for (int y = p.fdSize * 2 - 1; y >= 0; --y) {
+			final float fy = (float)y + 0.5f;
+			final float wy = (float)Math.exp(-(fy * fy) / spread);
+			final int iy = 2 * p.fdSize - 1 - y;
+			final int jy = 2 * p.fdSize + y;
+
+			for (int x = p.fdSize * 2 - 1; x >= 0; --x) {
+				final float val = wx[x] * wy;
+				final int ix = 2 * p.fdSize - 1 - x;
+				final int jx = 2 * p.fdSize + x;
+				gaussian[ iy * fdWidth + ix ] = val;
+				gaussian[ jy * fdWidth + ix ] = val;
+				gaussian[ iy * fdWidth + jx ] = val;
+				gaussian[ jy * fdWidth + jx ] = val;
+			}
+		}
 
 		setInitialSigma( p.initialSigma );
 	}
@@ -310,7 +323,6 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 
 		//! sample the region arround the keypoint location: gather the derivatives first, then weigh and
 		//! rotate them in flat passes over the sample arrays (the magnitude pass vectorizes)
-		final float[] dxs = descDx, dys = descDy;
 		for ( int y = fdWidth - 1; y >= 0; --y )
 		{
 			final double ys =
@@ -339,35 +351,32 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 
 				// get the samples
 				final int region_p = fdWidth * y + x;
-				dxs[region_p] = gradients.derX(xg, yg);
-				dys[region_p] = gradients.derY(xg, yg);
+				descDx[region_p] = gradients.derX(xg, yg);
+				descDy[region_p] = gradients.derY(xg, yg);
 			}
 		}
 
 		// weigh the gradients
-		final float[] mask = descriptorMaskFlat;
-		for (int q = 0; q < region0.length; ++q)
-			region0[q] = FloatArray2DScaleOctave.Gradients.mag(dxs[q], dys[q]) * mask[q];
+		for (int q = 0; q < gradMag.length; ++q)
+			gradMag[q] = FloatArray2DScaleOctave.Gradients.mag(descDx[q], descDy[q]) * gaussian[q];
 
 		// rotate the gradients orientation it with respect to the features orientation
-		for (int q = 0; q < region1.length; ++q)
-			region1[q] = (float)(Filter.fastAtan2(dys[q], dxs[q]) - orientation);
+		for (int q = 0; q < gradOri.length; ++q)
+			gradOri[q] = (float)(Filter.fastAtan2(descDy[q], descDx[q]) - orientation);
 
 		Arrays.fill(hist, 0);
 
 		// build the orientation histograms of 4x4 subregions: bins and weights of all samples first (vectorizes),
 		// then accumulate them in the original order
-		final int[] bb = descBinB, bt = descBinT;
-		final double[] w0 = descW0, w1 = descW1;
-		for (int q = 0; q < region1.length; ++q) {
-			final double bin_location = (region1[q] + Math.PI) / fdBinWidth;
+		for (int q = 0; q < gradOri.length; ++q) {
+			final float bin_location = (gradOri[q] + (float)Math.PI) / fdBinWidth;
 			final int bin_b = (int)(bin_location);
-			final double d = bin_location - bin_b;
-			final double t = region0[q];
-			bb[q] = wrapBin(bin_b, p.fdBins);
-			bt[q] = wrapBin(bin_b + 1, p.fdBins);
-			w0[q] = t * (1 - d);
-			w1[q] = t * d;
+			final float d = bin_location - bin_b;
+			final float t = gradMag[q];
+			descBinB[q] = wrapBin(bin_b, p.fdBins);
+			descBinT[q] = wrapBin(bin_b + 1, p.fdBins);
+			descW0[q] = t * (1 - d);
+			descW1[q] = t * d;
 		}
 		for ( int y = p.fdSize - 1; y >= 0; --y )
 		{
@@ -382,8 +391,8 @@ public class FloatArray2DSIFT extends FloatArray2DFeatureTransform< FloatArray2D
 					for ( int xsr = 3; xsr >= 0; --xsr )
 					{
 						final int q = yp + xp + ysrp + xsr;
-						hist[h + bb[q]] += w0[q];
-						hist[h + bt[q]] += w1[q];
+						hist[h + descBinB[q]] += descW0[q];
+						hist[h + descBinT[q]] += descW1[q];
 					}
 				}
 			}
