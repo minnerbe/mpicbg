@@ -237,70 +237,50 @@ public class FloatArray2DScaleOctaveDoGDetector
 	 * than 0.5 in at least one direction, try again there, but maximally 5 times.
 	 */
 	private void localize(final FloatArray2D[] d, int ic, int yc, int xc) {
-		int iac = ic - 1;
-		int ibc = ic + 1;
-		int rc = yc * d[ic].width;
-		int rac = rc - d[ic].width;
-		int rbc = rc + d[ic].width;
-		int xa = xc - 1;
-		int xb = xc + 1;
-
-		//     e000 unused
-		double e100 = d[iac].data[rac + xc];
-		//     e200 unused
-		double e010 = d[iac].data[rc + xa];
-		double e110 = d[iac].data[rc + xc];
-		double e210 = d[iac].data[rc + xb];
-		//     e020 unused
-		double e120 = d[iac].data[rbc + xc];
-		//     e220 unused
-		double e001 = d[ic].data[rac + xa];
-		double e101 = d[ic].data[rac + xc];
-		double e201 = d[ic].data[rac + xb];
-		double e011 = d[ic].data[rc + xa];
-		double e111 = d[ic].data[rc + xc];
-		double e211 = d[ic].data[rc + xb];
-		double e021 = d[ic].data[rbc + xa];
-		double e121 = d[ic].data[rbc + xc];
-		double e221 = d[ic].data[rbc + xb];
-		//     e002 unused
-		double e102 = d[ibc].data[rac + xc];
-		//     e202 unused
-		double e012 = d[ibc].data[rc + xa];
-		double e112 = d[ibc].data[rc + xc];
-		double e212 = d[ibc].data[rc + xb];
-		//     e022 unused
-		double e122 = d[ibc].data[rbc + xc];
-		//     e222 unused
-
 		boolean isLocalized = false;
 		boolean isLocalizable = true;
 
-		double dx;
-		double dy;
-		double di;
+		double dx, dy, di;    // first derivatives
+		double dxx, dyy, dxy; // second derivatives
+		double ox, oy, oi;    // offsets
 
-		double dxx;
-		double dyy;
-		double dii;
+		double fx = 0, fy = 0, fi = 0;  // subpixel coordinates
+		double od = Double.MAX_VALUE;   // offset square distance
 
-		double dxy;
-		double dxi;
-		double dyi;
-
-		double ox;
-		double oy;
-		double oi;
-
-		double od = Double.MAX_VALUE;      // offset square distance
-
-		double fx = 0;
-		double fy = 0;
-		double fi = 0;
+		double e111; // center pixel value
 
 		int t = 5; // maximal number of re-localizations
 		do {
 			--t;
+
+			// Load all relevant pixels of the 3x3x3 cube around (xc, yc, ic); corners are not needed
+			final int iac = ic - 1;
+			final int ibc = ic + 1;
+			final int rc = yc * d[ic].width;
+			final int rac = rc - d[ic].width;
+			final int rbc = rc + d[ic].width;
+			final int xa = xc - 1;
+			final int xb = xc + 1;
+
+			final double e100 = d[iac].data[rac + xc];
+			final double e010 = d[iac].data[rc + xa];
+			final double e110 = d[iac].data[rc + xc];
+			final double e210 = d[iac].data[rc + xb];
+			final double e120 = d[iac].data[rbc + xc];
+			final double e001 = d[ic].data[rac + xa];
+			final double e101 = d[ic].data[rac + xc];
+			final double e201 = d[ic].data[rac + xb];
+			final double e011 = d[ic].data[rc + xa];
+			e111 = d[ic].data[rc + xc];
+			final double e211 = d[ic].data[rc + xb];
+			final double e021 = d[ic].data[rbc + xa];
+			final double e121 = d[ic].data[rbc + xc];
+			final double e221 = d[ic].data[rbc + xb];
+			final double e102 = d[ibc].data[rac + xc];
+			final double e012 = d[ibc].data[rc + xa];
+			final double e112 = d[ibc].data[rc + xc];
+			final double e212 = d[ibc].data[rc + xb];
+			final double e122 = d[ibc].data[rbc + xc];
 
 			// derive at (x, y, i) by center of difference
 			dx = (e211 - e011) / 2.0f;
@@ -311,35 +291,37 @@ public class FloatArray2DScaleOctaveDoGDetector
 			final double e111_2 = 2.0f * e111;
 			dxx = e011 - e111_2 + e211;
 			dyy = e101 - e111_2 + e121;
-			dii = e110 - e111_2 + e112;
+			final double dii = e110 - e111_2 + e112;
 
 			dxy = (e221 - e021 - e201 + e001) / 4.0f;
-			dxi = (e212 - e012 - e210 + e010) / 4.0f;
-			dyi = (e122 - e102 - e120 + e100) / 4.0f;
+			final double dxi = (e212 - e012 - e210 + e010) / 4.0f;
+			final double dyi = (e122 - e102 - e120 + e100) / 4.0f;
 
 			// invert hessian
 			final double det = Matrix3x3.det(dxx, dxy, dxi, dxy, dyy, dyi, dxi, dyi, dii);
-			if (det == 0) return;
+			if (det == 0)
+				return;
 
-			final double det1 = 1.0 / det;
+			final double detInv = 1.0 / det;
 
-			final double hixx = (dyy * dii - dyi * dyi) * det1;
-			final double hixy = (dxi * dyi - dxy * dii) * det1;
-			final double hixi = (dxy * dyi - dxi * dyy) * det1;
-			final double hiyy = (dxx * dii - dxi * dxi) * det1;
-			final double hiyi = (dxi * dxy - dxx * dyi) * det1;
-			final double hiii = (dxx * dyy - dxy * dxy) * det1;
+			final double hixx = (dyy * dii - dyi * dyi) * detInv;
+			final double hixy = (dxi * dyi - dxy * dii) * detInv;
+			final double hixi = (dxy * dyi - dxi * dyy) * detInv;
+			final double hiyy = (dxx * dii - dxi * dxi) * detInv;
+			final double hiyi = (dxi * dxy - dxx * dyi) * detInv;
+			final double hiii = (dxx * dyy - dxy * dxy) * detInv;
 
 			// localize
 			ox = -hixx * dx - hixy * dy - hixi * di;
 			oy = -hixy * dx - hiyy * dy - hiyi * di;
 			oi = -hixi * dx - hiyi * dy - hiii * di;
 
-
+			// compute offset square distance to reject large offsets
 			final double odc = ox * ox + oy * oy + oi * oi;
 
 			if (odc < 2.0f) {
 				if ((Math.abs(ox) > 0.5 || Math.abs(oy) > 0.5 || Math.abs(oi) > 0.5) && odc < od) {
+					// Offset over 0.5 in at least one direction; try again at the new location if still within 3x3x3 cube
 					od = odc;
 
 					xc = (int)Math.round(xc + ox);
@@ -348,41 +330,14 @@ public class FloatArray2DScaleOctaveDoGDetector
 
 					if (xc < 1 || yc < 1 || ic < 1 || xc > d[0].width - 2 || yc > d[0].height - 2 || ic > d.length - 2)
 						isLocalizable = false;
-					else {
-						xa = xc - 1;
-						xb = xc + 1;
-						rc = yc * d[ic].width;
-						rac = rc - d[ic].width;
-						rbc = rc + d[ic].width;
-						iac = ic - 1;
-						ibc = ic + 1;
-
-						e100 = d[iac].data[rac + xc];
-						e010 = d[iac].data[rc + xa];
-						e110 = d[iac].data[rc + xc];
-						e210 = d[iac].data[rc + xb];
-						e120 = d[iac].data[rbc + xc];
-						e001 = d[ic].data[rac + xa];
-						e101 = d[ic].data[rac + xc];
-						e201 = d[ic].data[rac + xb];
-						e011 = d[ic].data[rc + xa];
-						e111 = d[ic].data[rc + xc];
-						e211 = d[ic].data[rc + xb];
-						e021 = d[ic].data[rbc + xa];
-						e121 = d[ic].data[rbc + xc];
-						e221 = d[ic].data[rbc + xb];
-						e102 = d[ibc].data[rac + xc];
-						e012 = d[ibc].data[rc + xa];
-						e112 = d[ibc].data[rc + xc];
-						e212 = d[ibc].data[rc + xb];
-						e122 = d[ibc].data[rbc + xc];
-					}
 				} else {
+					// Offset within 0.5 in all directions; accept the refined localization
 					fx = xc + ox;
 					fy = yc + oy;
 					fi = ic + oi;
 
 					if (fx < 0 || fy < 0 || fi < 0 || fx > d[0].width - 1 || fy > d[0].height - 1 || fi > d.length - 1)
+						// Reject detections that are outside the image
 						isLocalizable = false;
 					else
 						isLocalized = true;
@@ -391,8 +346,8 @@ public class FloatArray2DScaleOctaveDoGDetector
 				isLocalizable = false;
 			}
 		} while (!isLocalized && isLocalizable && t >= 0);
-		// reject detections that could not be localized properly
 
+		// reject detections that could not be localized properly
 		if (!isLocalized) {
 //						System.err.println( "Localization failed (x: " + xc + ", y: " + yc + ", i: " + ic + ") => (ox: " + ox + ", oy: " + oy + ", oi: " + oi + ")" );
 //						if ( ic < 1 || ic > d.length - 2 )
@@ -401,17 +356,16 @@ public class FloatArray2DScaleOctaveDoGDetector
 		}
 
 		// reject detections with very low contrast
-
 		if (Math.abs(e111 + 0.5f * (dx * ox + dy * oy + di * oi)) < MIN_CONTRAST)
 			return;
 
 		// reject edge responses
-
 		final double det = dxx * dyy - dxy * dxy;
 		final double trace = dxx + dyy;
 		if (trace * trace / det > MAX_CURVATURE_RATIO)
 			return;
 
+		// Finally, accept the candidate
 		candidates.addElement(new double[]{ fx, fy, fi });
 	}
 }
