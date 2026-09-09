@@ -21,6 +21,8 @@
  */
 package mpicbg.imagefeatures;
 
+import java.util.Arrays;
+
 /**
  * single octave of a discrete {@code FloatArray2DScaleSpace}
  * <p>
@@ -65,36 +67,30 @@ public class FloatArray2DScaleOctave
 	private float K_MIN1_INV = 1.0f / ( K - 1.0f );
 
 	/**
-	 * steps per octave
-	 * 
-	 * an octave consists of STEPS + 3 images to be 
+	 * Steps per octave. An octave consists of STEPS + 3 images to be.
 	 */
 	public int STEPS = 1;
 	
 	/**
 	 * sigma of gaussian kernels corresponding to the steps of the octave
-	 * 
+	 * <p>
 	 * the first member is the sigma of the gaussian kernel that is assumed to
 	 * be the generating kernel of the first gaussian image instance of the
 	 * octave 
 	 */
 	public float[] SIGMA;
-//	public float[] getSigma()
-//	{
-//		return SIGMA;
-//	}
-	
+
 	/**
 	 * sigma of gaussian kernels required to create the corresponding gaussian
 	 * image instances from the first one
 	 */
-	private float[] SIGMA_DIFF;
+	private final float[] SIGMA_DIFF;
 	
 	/**
 	 * 1D gaussian kernels required to create the corresponding gaussian
 	 * image instances from the first one
 	 */
-	private float[][] KERNEL_DIFF;
+	private final float[][] KERNEL_DIFF;
 	
 	/**
 	 * gaussian smoothed images
@@ -110,7 +106,7 @@ public class FloatArray2DScaleOctave
 	}
 	
 	/**
-	 * scale normalised difference of gaussian images
+	 * scale normalized difference of gaussian images
 	 */
 	private FloatArray2D[] d;
 	public FloatArray2D[] getD()
@@ -192,7 +188,7 @@ public class FloatArray2DScaleOctave
 	 * 
 	 * @param img image being the first gaussian instance of the scale octave
 	 *   img must be a 2d-array of float values in range [0.0f, ..., 1.0f]
-	 * @param initial_sigma inital gaussian sigma
+	 * @param initial_sigma initial gaussian sigma
 	 */
 	public FloatArray2DScaleOctave(
 			FloatArray2D img,
@@ -236,11 +232,11 @@ public class FloatArray2DScaleOctave
 	
 	/**
 	 * Constructor
-	 * 
-	 * faster initialisation with precomputed gaussian kernels
+	 * <p>
+	 * faster initialization with precomputed gaussian kernels
 	 * 
 	 * @param img image being the first gaussian instance of the scale octave 
-	 * @param sigma initial_sigma inital gaussian sigma
+	 * @param sigma initial_sigma initial gaussian sigma
 	 * 
 	 */
 	public FloatArray2DScaleOctave(
@@ -271,7 +267,7 @@ public class FloatArray2DScaleOctave
 	
 	/**
 	 * build only the gaussian image with 2 * INITIAL_SIGMA
-	 * 
+	 * <p>
 	 * Use this method for the partial creation of an octaved scale space
 	 * without creating each scale octave.  Like proposed by Lowe
 	 * \citep{Lowe04}, you can use this image to build the next scale octave.
@@ -307,7 +303,7 @@ public class FloatArray2DScaleOctave
 		d = new FloatArray2D[STEPS + 2];
 		for (int i = 0; i < d.length; ++i)
 			d[i] = new FloatArray2D(width, height);
-		// d[ i ] = ( l[ i + 1 ] - l[ i ] ) * K_MIN1_INV, written together with the level whose rows are in cache
+
 		for ( int i = 1; i < SIGMA_DIFF.length; ++i )
 		{
 			if ( state == State.STUB && i == STEPS ) continue;
@@ -315,10 +311,7 @@ public class FloatArray2DScaleOctave
 			l[i] = Filter.convolveSeparable(l[0], KERNEL_DIFF[i], KERNEL_DIFF[i], l[i - 1], d[i - 1], upper, upper == null ? null : d[i], K_MIN1_INV);
 		}
 		l1 = new FloatArray2D[ STEPS + 3 ][];
-		for ( int i = 0; i < l1.length; ++i )
-		{
-			l1[ i ] = null;
-		}
+		Arrays.fill(l1, null);
 		g = new Gradients[STEPS + 3];
 		
 		state = State.COMPLETE;
