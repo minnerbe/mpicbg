@@ -38,7 +38,7 @@ public class Filter
      *
      * @return float[] Gaussian kernel of appropriate size
      */
-    final static public double[] createGaussianKernel(
+    static public double[] createGaussianKernel(
     		final double sigma,
     		final boolean normalize )
 	{
@@ -51,7 +51,7 @@ public class Filter
 		}
 		else
 		{
-			final int size = Math.max( 3, ( int ) ( 2 * ( int )( 3 * sigma + 0.5 ) + 1 ) );
+			final int size = Math.max(3, 2 * (int)(3 * sigma + 0.5) + 1);
 
 			final double two_sq_sigma = 2 * sigma * sigma;
 			kernel = new double[ size ];
@@ -86,7 +86,7 @@ public class Filter
      *
      * @return float[] Gaussian kernel of appropriate size
      */
-    final static public float[] createGaussianKernel(
+    static public float[] createGaussianKernel(
     		final float sigma,
     		final boolean normalize )
 	{
@@ -99,7 +99,7 @@ public class Filter
 		}
 		else
 		{
-			final int size = Math.max( 3, ( int ) ( 2 * ( int )( 3 * sigma + 0.5 ) + 1 ) );
+			final int size = Math.max( 3, 2 * (int)(3 * sigma + 0.5) + 1);
 
 			final float two_sq_sigma = 2 * sigma * sigma;
 			kernel = new float[ size ];
@@ -134,7 +134,7 @@ public class Filter
 	 *   {@link OrientationHistogram}
 	 */
 	@Deprecated
-	final static public FloatArray2D createGaussianKernelOffset(
+	static public FloatArray2D createGaussianKernelOffset(
 			final float sigma,
 			final float offset_x,
 			final float offset_y,
@@ -148,7 +148,7 @@ public class Filter
 		}
 		else
 		{
-			final int size = Math.max( 3, ( int ) ( 2 * Math.round( 3 * sigma ) + 1 ) );
+			final int size = Math.max(3, 2 * Math.round(3 * sigma) + 1);
 			final float two_sq_sigma = 2 * sigma * sigma;
 			// float normalization_factor = 1.0/(float)M_PI/two_sq_sigma;
 			kernel = new FloatArray2D( size, size );
@@ -184,7 +184,7 @@ public class Filter
 	 *   {@link OrientationHistogram}
 	 */
 	@Deprecated
-	final static public FloatArray2D createGaussianKernelOffset(
+	static public FloatArray2D createGaussianKernelOffset(
 			final double sigma,
 			final double offset_x,
 			final double offset_y,
@@ -231,7 +231,7 @@ public class Filter
 	 * reducing the argument to [0, tan(pi / 8)]. Several times faster than {@link Math#atan2}
 	 * and, unlike it, platform independent.
 	 */
-	final public static float fastAtan2(final float y, final float x) {
+	public static float fastAtan2(final float y, final float x) {
 		final double ax = Math.abs(x);
 		final double ay = Math.abs(y);
 
@@ -256,7 +256,7 @@ public class Filter
 		return (float)(y < 0 ? -r : r);
 	}
 
-	final public static FloatArray2D[] createGradients( final FloatArray2D array )
+	public static FloatArray2D[] createGradients( final FloatArray2D array )
 	{
 		final FloatArray2D[] gradients = new FloatArray2D[ 2 ];
 		gradients[ 0 ] = new FloatArray2D( array.width, array.height );
@@ -293,7 +293,7 @@ public class Filter
 	 * @param scale
 	 *            defines the range
 	 */
-    final static public void enhance( final FloatArray2D src, final float scale )
+    static public void enhance( final FloatArray2D src, final float scale )
     {
     	float min = src.data[ 0 ];
     	float max = min;
@@ -316,7 +316,7 @@ public class Filter
 	 *
 	 * @return convolved image
 	 */
-	final static public FloatArray2D convolveSeparable(
+	static public FloatArray2D convolveSeparable(
 			final FloatArray2D input,
 			final float[] h,
 			final float[] v )
@@ -339,7 +339,7 @@ public class Filter
 	 * a full-size temporary image that would be written to and read back from memory.
 	 * </p>
 	 */
-	final static public FloatArray2D convolveSeparable(
+	static public FloatArray2D convolveSeparable(
 			final FloatArray2D input,
 			final float[] h,
 			final float[] v,
@@ -353,34 +353,48 @@ public class Filter
 		final int height = input.height;
 		final FloatArray2D output = new FloatArray2D(w, height);
 
-		final int hl = h.length / 2;
-		final int vl = v.length / 2;
-		final int n = w - h.length + 1; // pixels per row that need no border handling
+		final int nh = h.length / 2;
+		final int nv = v.length / 2;
 
-		// create lookup tables for coordinates outside the image range
-		final int[] xb = new int[ h.length + hl - 1 ];
-		final int[] xa = new int[ h.length + hl - 1 ];
-		for ( int i = 0; i < xb.length; ++i )
-		{
-			xb[i] = Util.pingPong(i - hl, w);
-			xa[i] = Util.pingPong(i + n, w);
+		// Lookup tables for the coordinates of the pixels reflected at the left and right borders
+		final int[] leftBnd = new int[nh];
+		final int[] rightBnd = new int[nh];
+		for (int i = 0; i < nh; ++i) {
+			leftBnd[i] = Util.pingPong(-1 - i, w);
+			rightBnd[i] = Util.pingPong(w + i, w);
 		}
 
 		final float[] in = input.data;
 		final float[] out = output.data;
-		final float[][] ring = new float[v.length][w];
+
+		// Buffers for the horizontally convolved rows
+		final float[][] surroundingRows = new float[v.length][w];
+		final float[] pad = new float[w + 2 * nh];
 		final float[] row = new float[w];
 		final float[] acc = new float[w];
 		final float[] diff = new float[w];
 
 		int next = 0; // the next input row to be convolved horizontally
 		for (int y = 0; y < height; ++y) {
-			// output row y needs the input rows y - vl to y + vl (mirrored at the borders), so the ring holds all of them
-			for (final int last = Math.min(height - 1, y + vl); next <= last; ++next)
-				convolveRow(in, next * w, h, n, xb, xa, row, acc, ring[next % v.length]);
-			convolveColumns(ring, v, y, height, acc);
+			// Output row y needs the input rows y - nv to y + nv; the ring holds all of them
+			for (final int last = Math.min(height - 1, y + nv); next <= last; ++next) {
+				// Pad the input row with reflected pixels at the borders, then convolve it horizontally
+				final int idx = next * w;
+				System.arraycopy(in, idx, pad, nh, w);
+				for (int i = 0; i < nh; ++i) {
+					pad[nh - 1 - i] = in[idx + leftBnd[i]];
+					pad[nh + w + i] = in[idx + rightBnd[i]];
+				}
+				convolvePaddedRow(pad, h, row, surroundingRows[next % v.length]);
+			}
+
+			// Convolve the vertically convolved rows with the vertical kernel into the output row, copy it to the output image
+			convolveColumns(surroundingRows, v, y, height, acc);
 			final int r = y * w;
 			System.arraycopy(acc, 0, out, r, w);
+
+			// If desired, compute the scaled differences to the lower and upper levels (e.g., for DoG)
+			// This is done here while the output row is still in cache, to avoid extra passes over the images
 			if (dLower != null) {
 				System.arraycopy(lower.data, r, row, 0, w);
 				scaledDifference(diff, acc, row, scale);
@@ -397,76 +411,81 @@ public class Filter
 	}
 
 	/**
-	 * Convolve the row of {@code in} starting at {@code r} with {@code h} into {@code t}. C2 (JDK 8 to
-	 * 25) only vectorizes {@code acc[ x ] += k * src[ x ]} when both arrays are indexed by the same
-	 * expression, so each shifted source row is copied into a scratch row first; the copy is a small
-	 * fraction of the multiply-adds and stays in L1.
+	 * Convolve the padded row {@code pad} with {@code h} into {@code out}; the padding lets all output
+	 * pixels including the borders run through the same loop. C2 (JDK 8 to 25) only vectorizes
+	 * {@code acc[x] += k * src[x]} when both arrays are indexed by the same expression, so each shifted
+	 * source row is copied into a scratch row first; the copies are a small fraction of the
+	 * multiply-adds and stay in L1.
 	 */
-	private static void convolveRow(
-			final float[] in,
-			final int r,
-			final float[] h,
-			final int n,
-			final int[] xb,
-			final int[] xa,
-			final float[] row,
-			final float[] acc,
-			final float[] t
-	) {
-		final int hl = h.length / 2;
-		for (int xk = 0; xk < h.length; ++xk) {
+	private static void convolvePaddedRow(final float[] pad, final float[] h, final float[] row, final float[] out) {
+		final int w = out.length;
+
+		// Initialize the output row
+		System.arraycopy(pad, 0, row, 0, w);
+		final float h0 = h[0];
+		for (int x = 0; x < w; ++x)
+			out[x] = h0 * row[x];
+
+		// Add the remaining shifted axpy operations
+		for (int xk = 1; xk < h.length; ++xk) {
 			final float hk = h[xk];
-			System.arraycopy(in, r + xk, row, 0, n);
-			if (xk == 0)
-				for (int x = 0; x < n; ++x)
-					acc[x] = hk * row[x];
-			else
-				for (int x = 0; x < n; ++x)
-					acc[x] += hk * row[x];
-		}
-		System.arraycopy(acc, 0, t, hl, n);
-		for (int x = 0; x < hl; ++x) {
-			float valb = 0;
-			float vala = 0;
-			for (int xk = 0; xk < h.length; ++xk) {
-				valb += h[xk] * in[r + xb[x + xk]];
-				vala += h[xk] * in[r + xa[x + xk]];
-			}
-			t[x] = valb;
-			t[x + n + hl] = vala;
+			System.arraycopy(pad, xk, row, 0, w);
+			for (int x = 0; x < w; ++x)
+				out[x] += hk * row[x];
 		}
 	}
 
 	/**
-	 * {@code acc} = the rows of the ring for the input rows {@code y - vl ... y + vl} (mirrored at the
+	 * {@code out} = the rows of the ring for the input rows {@code y - vl ... y + vl} (mirrored at the
 	 * borders) weighted by {@code v}. The ring rows are read in place, and four taps share one load and
 	 * store of the accumulator; the taps are still added one after the other in ascending order.
 	 */
-	private static void convolveColumns(final float[][] ring, final float[] v, final int y, final int height, final float[] acc) {
+	private static void convolveColumns(
+			final float[][] ring,
+			final float[] v,
+			final int y,
+			final int height,
+			final float[] out
+	) {
 		final int vl = v.length / 2;
-		final int w = acc.length;
+		final int w = out.length;
+
+		// Initialize the output row with the first axpy
 		final float v0 = v[0];
 		final float[] t0 = ringRow(ring, y - vl, height);
 		for (int x = 0; x < w; ++x)
-			acc[x] = v0 * t0[x];
+			out[x] = v0 * t0[x];
+
+		// Add the remaining axpy operations in groups of four for better vectorization
 		int yk = 1;
 		for (; yk + 3 < v.length; yk += 4) {
-			final float v1 = v[yk], v2 = v[yk + 1], v3 = v[yk + 2], v4 = v[yk + 3];
-			final float[] t1 = ringRow(ring, y - vl + yk, height), t2 = ringRow(ring, y - vl + yk + 1, height), t3 = ringRow(ring, y - vl + yk + 2, height), t4 = ringRow(ring, y - vl + yk + 3, height);
+			// Kernel weights; four
+			final float v1 = v[yk];
+			final float v2 = v[yk + 1];
+			final float v3 = v[yk + 2];
+			final float v4 = v[yk + 3];
+
+			final float[] t1 = ringRow(ring, y - vl + yk, height);
+			final float[] t2 = ringRow(ring, y - vl + yk + 1, height);
+			final float[] t3 = ringRow(ring, y - vl + yk + 2, height);
+			final float[] t4 = ringRow(ring, y - vl + yk + 3, height);
+
 			for (int x = 0; x < w; ++x) {
-				float a = acc[x];
+				float a = out[x];
 				a += v1 * t1[x];
 				a += v2 * t2[x];
 				a += v3 * t3[x];
 				a += v4 * t4[x];
-				acc[x] = a;
+				out[x] = a;
 			}
 		}
+
+		// Add any remaining rows
 		for (; yk < v.length; ++yk) {
 			final float vk = v[yk];
 			final float[] t = ringRow(ring, y - vl + yk, height);
 			for (int x = 0; x < w; ++x)
-				acc[x] += vk * t[x];
+				out[x] += vk * t[x];
 		}
 	}
 
